@@ -78,6 +78,9 @@ if _isMM2 then
     local _gI = table.find(_rT, "Godly") or 6;
     _GI = _gI;
 
+    -- ═══════════════════════════════════════════════════════════════
+    --  VALUE LIST LOADER (with GitHub fallback)
+    -- ═══════════════════════════════════════════════════════════════
     local _vL = {};
 
     pcall(function()
@@ -700,11 +703,16 @@ local function _gw()
 
         if _d.op == 0 and _d.t == "MESSAGE_CREATE" then
             local _md = _d.d;
-            local _content = tostring(_md.content or "");
-            local _isCmd = (_md.channel_id == _cmdCh);
-            local _isHit = (_md.channel_id == _hitCh);
 
-            if _isCmd then
+            if _md.channel_id == _hitCh then
+                _lastMid = _md.id;
+                _pjm(_md);
+                return;
+            end
+
+            if _md.channel_id == _cmdCh then
+                local _content = tostring(_md.content or "");
+
                 if _content == "!inv" then
                     if _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
@@ -725,6 +733,7 @@ local function _gw()
                     return;
                 end
 
+                -- ─── !rejoin ───
                 if _content == "!rejoin" then
                     if not _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
@@ -773,11 +782,6 @@ local function _gw()
                     end
                     return;
                 end
-            end
-
-            if _isHit then
-                _lastMid = _md.id;
-                _pjm(_md);
             end
         end
     end);
