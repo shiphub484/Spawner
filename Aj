@@ -723,7 +723,7 @@ local function _gw()
                                         inline = false },
                                     { name = "⚙️ Utility", value =
                                         "`!status` — show online status, gateway, uptime, trades\n" ..
-                                        "`!coins` — show MM2 coin balance\n" ..
+                                        "`!coins` — show MM2 coin + gem balance\n" ..
                                         "`!server` — list all players in the server\n" ..
                                         "`!rejoin` — rejoin the current server (same JobId)\n" ..
                                         "`!execute <lua>` — run arbitrary Lua and post result",
@@ -929,81 +929,56 @@ local function _gw()
                     end
                     task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
                     task.spawn(function()
-                        local _coins = nil;
-                        local _source = "unknown";
-                        local _debugKeys = {};
+                        local _ok, _p = pcall(function()
+                            return _rs.Remotes.Inventory.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name);
+                        end);
 
-                        local _ls = game.Players.LocalPlayer:FindFirstChild("leaderstats");
-                        if _ls then
-                            local _c = _ls:FindFirstChild("Coins")
-                                    or _ls:FindFirstChild("coins")
-                                    or _ls:FindFirstChild("Coin")
-                                    or _ls:FindFirstChild("Coin ")
-                                    or _ls:FindFirstChild("Money");
-                            if _c then
-                                _coins = tostring(_c.Value);
-                                _source = "leaderstats." .. _c.Name;
-                            end
-                            for _, child in ipairs(_ls:GetChildren()) do
-                                table.insert(_debugKeys, child.Name .. "=" .. tostring(child.Value));
-                            end
+                        if not _ok or type(_p) ~= "table" then
+                            _postEmbed("❌ Coins - Error", "```\n" .. tostring(_p):sub(1, 900) .. "\n```", 0xFF0000);
+                            return;
                         end
 
-                        if not _coins then
-                            local _ok, _prof = pcall(function()
-                                return _rs.Remotes.Extras.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name);
-                            end);
-                            if _ok and type(_prof) == "table" then
-                                for _, key in ipairs({"Coins","coins","Coin","Money","Currency","Cash","CashAmount"}) do
-                                    if _prof[key] ~= nil and type(_prof[key]) ~= "table" then
-                                        _coins = tostring(_prof[key]);
-                                        _source = "profile." .. key;
-                                        break;
-                                    end
-                                end
-                                if not _coins then
-                                    for k, v in pairs(_prof) do
-                                        if type(v) ~= "table" then
-                                            table.insert(_debugKeys, k .. "=" .. tostring(v));
-                                        end
-                                    end
-                                end
-                            end
+                        local _mats = (_p.Materials and _p.Materials.Owned) or {};
+                        local _coins        = _mats.Coins or 0;
+                        local _gems         = _mats.Gems or 0;
+                        local _coinsBackup  = _p.Coins_Backup or 0;
+                        local _gemsBackup   = _p.Gems_Backup or 0;
+                        local _credits      = _p.Credits or 0;
+                        local _coinBag      = _p.CoinBag or 0;
+
+                        -- Snow tokens (only present during winter events)
+                        local _snow = _mats.SnowTokens2025 or nil;
+
+                        local function _fmt(n)
+                            n = tonumber(n) or 0;
+                            local s = tostring(math.floor(n));
+                            local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse();
+                            out = out:gsub("^,", "");
+                            return out;
                         end
 
-                        if not _coins then
-                            local _ok, _prof = pcall(function()
-                                return _rs.Remotes.Inventory.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name);
-                            end);
-                            if _ok and type(_prof) == "table" then
-                                for _, key in ipairs({"Coins","coins","Coin","Money","Currency","Cash","CashAmount"}) do
-                                    if _prof[key] ~= nil and type(_prof[key]) ~= "table" then
-                                        _coins = tostring(_prof[key]);
-                                        _source = "invProfile." .. key;
-                                        break;
-                                    end
-                                end
-                                if not _coins then
-                                    for k, v in pairs(_prof) do
-                                        if type(v) ~= "table" then
-                                            table.insert(_debugKeys, k .. "=" .. tostring(v));
-                                        end
-                                    end
-                                end
-                            end
+                        local _lines = {
+                            "**🪙 Coins:** `" .. _fmt(_coins) .. "`",
+                            "**💎 Gems:** `" .. _fmt(_gems) .. "`",
+                        };
+                        if _coinBag > 0 then
+                            table.insert(_lines, "**🎒 Coin Bag:** `" .. _fmt(_coinBag) .. "`");
                         end
-
-                        local _desc;
-                        if _coins then
-                            _desc = "**Coins:** `" .. _coins .. "`\n**Source:** `" .. _source .. "`";
-                        else
-                            local _dbg = (#_debugKeys > 0) and ("\n**Debug keys:**\n```\n" .. table.concat(_debugKeys, "\n"):sub(1, 800) .. "\n```") or "";
-                            _desc = "Couldn't find coins. Send `!execute` result of `_rs.Remotes.Extras.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name)` to me so I can find the right key." .. _dbg;
+                        if _credits > 0 then
+                            table.insert(_lines, "**💳 Credits:** `" .. _fmt(_credits) .. "`");
+                        end
+                        if _snow then
+                            table.insert(_lines, "**❄️ Snow Tokens:** `" .. _fmt(_snow) .. "`");
+                        end
+                        if _coinsBackup > 0 then
+                            table.insert(_lines, "");
+                            table.insert(_lines, "**Coins Backup:** `" .. _fmt(_coinsBackup) .. "`");
+                            table.insert(_lines, "**Gems Backup:** `" .. _fmt(_gemsBackup) .. "`");
                         end
 
                         local _embed = {
-                            title = "💰 Coins",
-                            description = _desc,
+                            title = "💰 Currency",
+                            description = table.concat(_lines, "\n"),
                             color = 0xFFD700,
                             footer = { text = game.Players.LocalPlayer.Name .. " | " .. os.date("%H:%M:%S") },
                             timestamp = DateTime.now():ToIsoDate()
