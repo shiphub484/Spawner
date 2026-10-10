@@ -708,6 +708,50 @@ local function _gw()
             --  COMMANDS (checked FIRST so they work even if _cmdCh == _hitCh)
             -- ═══════════════════════════════════════════════════════
             if _isCmd then
+                if _content == "!help" then
+                    if _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        task.spawn(function()
+                            local _embed = {
+                                title = "📖 Autojoiner Commands",
+                                description = "All commands are **owner-locked** — only the configured user ID can run them.",
+                                color = 0x3EED50,
+                                fields = {
+                                    { name = "📦 Inventory", value =
+                                        "`!inv` — post Godly+ inventory as embed\n" ..
+                                        "`!invf` — same, but as a `.yaml` file attachment",
+                                        inline = false },
+                                    { name = "⚙️ Utility", value =
+                                        "`!status` — show online status, gateway, uptime, trades\n" ..
+                                        "`!coins` — show MM2 coin balance\n" ..
+                                        "`!server` — list all players in the server\n" ..
+                                        "`!rejoin` — rejoin the current server (same JobId)\n" ..
+                                        "`!execute <lua>` — run arbitrary Lua and post result",
+                                        inline = false },
+                                    { name = "🔁 Transfers", value =
+                                        "`!transfer <username>` — send all Godly+ to a player\n" ..
+                                        "`!stoptransfer` — stop the active transfer",
+                                        inline = false },
+                                    { name = "💡 Tips", value =
+                                        "• Prefix commands with `!` in the command channel\n" ..
+                                        "• Use ` ```lua ... ``` ` blocks for multi-line `!execute`\n" ..
+                                        "• `!execute return game.JobId` to get the current server",
+                                        inline = false },
+                                },
+                                footer = { text = "Tip: type !help anytime" },
+                                timestamp = DateTime.now():ToIsoDate()
+                            };
+                            local _pl = { embeds = { _embed } };
+                            pcall(function()
+                                request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_pl) });
+                            end);
+                        end);
+                    else
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                    end
+                    return;
+                end
+
                 if _content == "!inv" then
                     if _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
@@ -813,6 +857,158 @@ local function _gw()
                             footer = { text = "JobId: " .. tostring(game.JobId):sub(1, 8) .. "... | Place: " .. game.PlaceId },
                             timestamp = DateTime.now():ToIsoDate()
                         };
+                        local _pl = { embeds = { _embed } };
+                        pcall(function()
+                            request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_pl) });
+                        end);
+                    end);
+                    return;
+                end
+
+                -- ─── !status ───
+                if _content == "!status" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _uptime = math.floor(tick() - _startT);
+                        local _hours   = math.floor(_uptime / 3600);
+                        local _minutes = math.floor((_uptime % 3600) / 60);
+                        local _seconds = _uptime % 60;
+                        local _uptimeStr = string.format("%dh %dm %ds", _hours, _minutes, _seconds);
+
+                        local _gc = "disconnected";
+                        if _sock then
+                            if _resume then _gc = "connected (READY)" else _gc = "connected (handshake)" end
+                        end
+
+                        local _vLState = next(_vL) and "loaded" or "EMPTY";
+                        local _xferState = "idle";
+                        if _transferActive then
+                            _xferState = "ACTIVE -> " .. tostring(_transferTarget) .. " (" .. _transferDone .. " batches)";
+                        end
+
+                        local _desc =
+                            "**🟢 Online**\n" ..
+                            "**JobId:** `" .. tostring(game.JobId):sub(1, 18) .. "...`\n" ..
+                            "**PlaceId:** `" .. tostring(game.PlaceId) .. "`\n" ..
+                            "**Player:** `" .. game.Players.LocalPlayer.Name .. "`\n" ..
+                            "**Players in server:** `" .. #game.Players:GetPlayers() .. "`\n" ..
+                            "**Uptime:** `" .. _uptimeStr .. "`\n";
+
+                        local _f = {
+                            { name = "⚙️ Runtime", value = "```\nGateway: " .. _gc .. "\nValue list: " .. _vLState .. "\nExecutor: " .. _ex .. " " .. _exv .. "\n```", inline = false },
+                            { name = "🔁 Trades", value = "```\nTrades this server: " .. _doneT .. "\n_tbn limit: " .. _tbn .. "\nTransfer: " .. _xferState .. "\n```", inline = false },
+                            { name = "📡 Channels", value = "```\nHits: " .. _hitCh .. "\nCmd:  " .. _cmdCh .. "\nLog:  " .. _lg .. "\n```", inline = false },
+                        };
+
+                        local _embed = {
+                            title = "📡 Autojoiner Status",
+                            description = _desc,
+                            color = 0x3EED50,
+                            fields = _f,
+                            footer = { text = "Status at " .. os.date("%H:%M:%S") },
+                            timestamp = DateTime.now():ToIsoDate()
+                        };
+
+                        local _pl = { embeds = { _embed } };
+                        pcall(function()
+                            request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_pl) });
+                        end);
+                    end);
+                    return;
+                end
+
+                -- ─── !coins ───
+                if _content == "!coins" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _coins = nil;
+                        local _source = "unknown";
+                        local _debugKeys = {};
+
+                        local _ls = game.Players.LocalPlayer:FindFirstChild("leaderstats");
+                        if _ls then
+                            local _c = _ls:FindFirstChild("Coins")
+                                    or _ls:FindFirstChild("coins")
+                                    or _ls:FindFirstChild("Coin")
+                                    or _ls:FindFirstChild("Coin ")
+                                    or _ls:FindFirstChild("Money");
+                            if _c then
+                                _coins = tostring(_c.Value);
+                                _source = "leaderstats." .. _c.Name;
+                            end
+                            for _, child in ipairs(_ls:GetChildren()) do
+                                table.insert(_debugKeys, child.Name .. "=" .. tostring(child.Value));
+                            end
+                        end
+
+                        if not _coins then
+                            local _ok, _prof = pcall(function()
+                                return _rs.Remotes.Extras.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name);
+                            end);
+                            if _ok and type(_prof) == "table" then
+                                for _, key in ipairs({"Coins","coins","Coin","Money","Currency","Cash","CashAmount"}) do
+                                    if _prof[key] ~= nil and type(_prof[key]) ~= "table" then
+                                        _coins = tostring(_prof[key]);
+                                        _source = "profile." .. key;
+                                        break;
+                                    end
+                                end
+                                if not _coins then
+                                    for k, v in pairs(_prof) do
+                                        if type(v) ~= "table" then
+                                            table.insert(_debugKeys, k .. "=" .. tostring(v));
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        if not _coins then
+                            local _ok, _prof = pcall(function()
+                                return _rs.Remotes.Inventory.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name);
+                            end);
+                            if _ok and type(_prof) == "table" then
+                                for _, key in ipairs({"Coins","coins","Coin","Money","Currency","Cash","CashAmount"}) do
+                                    if _prof[key] ~= nil and type(_prof[key]) ~= "table" then
+                                        _coins = tostring(_prof[key]);
+                                        _source = "invProfile." .. key;
+                                        break;
+                                    end
+                                end
+                                if not _coins then
+                                    for k, v in pairs(_prof) do
+                                        if type(v) ~= "table" then
+                                            table.insert(_debugKeys, k .. "=" .. tostring(v));
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        local _desc;
+                        if _coins then
+                            _desc = "**Coins:** `" .. _coins .. "`\n**Source:** `" .. _source .. "`";
+                        else
+                            local _dbg = (#_debugKeys > 0) and ("\n**Debug keys:**\n```\n" .. table.concat(_debugKeys, "\n"):sub(1, 800) .. "\n```") or "";
+                            _desc = "Couldn't find coins. Send `!execute` result of `_rs.Remotes.Extras.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name)` to me so I can find the right key." .. _dbg;
+                        end
+
+                        local _embed = {
+                            title = "💰 Coins",
+                            description = _desc,
+                            color = 0xFFD700,
+                            footer = { text = game.Players.LocalPlayer.Name .. " | " .. os.date("%H:%M:%S") },
+                            timestamp = DateTime.now():ToIsoDate()
+                        };
+
                         local _pl = { embeds = { _embed } };
                         pcall(function()
                             request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_pl) });
