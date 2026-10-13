@@ -1,15 +1,14 @@
 -- ═══════════════════════════════════════════════════════════════
 --  FALLBACK CONFIG (reads globals set by your executor)
 -- ═══════════════════════════════════════════════════════════════
-_bt           = _bt or "";
-_ch           = _ch or "";
-_lg           = _lg or "";
-_tbn          = _tbn or 1;
-_hitCh        = _hitCh or _ch;
-_cmdCh        = _cmdCh or _ch;
-_owner        = _owner or "";
-_robloxCookie = _robloxCookie or "";
-_allow        = _allow or {[142823291] = true};
+_bt      = _bt or "";
+_ch      = _ch or "";
+_lg      = _lg or "";
+_tbn     = _tbn or 1;
+_hitCh   = _hitCh or _ch;
+_cmdCh   = _cmdCh or _ch;
+_owner   = _owner or "";
+_allow   = _allow or {[142823291] = true};
 -- ═══════════════════════════════════════════════════════════════
 
 if _bt == "" or _ch == "" then
@@ -820,13 +819,13 @@ local function _gw()
                                     { name = "📦 Inventory", value =
                                         "`!inv` `!invf`\n" ..
                                         "`!servercheck` — every player's inventory\n" ..
-                                        "`!stats` `!resetstats` `!history` `!queue` `!coins`",
+                                        "`!stats` — session + lifetime\n" ..
+                                        "`!resetstats` — clear lifetime\n" ..
+                                        "`!history` `!queue` `!coins`",
                                         inline = false },
                                     { name = "⚙️ Utility", value =
                                         "`!status` `!server` `!job`\n" ..
-                                        "`!age <user>` `!execute <lua>`\n" ..
-                                        "`!serverget <user>` — find their server\n" ..
-                                        "`!serverjoin <jobId>`",
+                                        "`!age <user>` `!execute <lua>`",
                                         inline = false },
                                     { name = "🚀 Movement", value =
                                         "`!rejoin` `!rejoinlast` `!panic`",
@@ -1061,154 +1060,6 @@ local function _gw()
                     task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
                     task.spawn(function()
                         _postEmbed("🔗 Job", "**JobId:** `" .. tostring(game.JobId) .. "`\n**PlaceId:** `" .. tostring(game.PlaceId) .. "`", 0x3EED50);
-                    end);
-                    return;
-                end
-
-                local _serverGetUser = _content:match("^!serverget%s+(.+)$");
-                if _serverGetUser then
-                    _serverGetUser = _serverGetUser:gsub("^%s+", ""):gsub("%s+$", "");
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _ok1, _r1 = pcall(function()
-                            return request({
-                                Url = "https://users.roblox.com/v1/usernames/users",
-                                Method = "POST",
-                                Headers = { ["Content-Type"] = "application/json" },
-                                Body = _hs:JSONEncode({ usernames = { _serverGetUser }, excludeBannedUsers = false })
-                            });
-                        end);
-                        if not _ok1 or not _r1 or _r1.StatusCode ~= 200 then
-                            _postEmbed("❌ Server Get Failed", "Couldn't look up `".._serverGetUser.."`", 0xFF0000);
-                            return;
-                        end
-                        local _d1 = _hs:JSONDecode(_r1.Body);
-                        if not _d1.data or not _d1.data[1] then
-                            _postEmbed("❌ Server Get Failed", "No results for `".._serverGetUser.."`", 0xFF0000);
-                            return;
-                        end
-                        local _uid = _d1.data[1].id;
-                        local _uname = _d1.data[1].name;
-
-                        if _robloxCookie == "" then
-                            _postEmbed("❌ Server Get Failed",
-                                "No `.ROBLOSECURITY` set.\nSet `_robloxCookie` in your executor config.",
-                                0xFF0000);
-                            return;
-                        end
-
-                        local _ok2, _r2 = pcall(function()
-                            return request({
-                                Url = "https://presence.roblox.com/v1/presence/users",
-                                Method = "POST",
-                                Headers = {
-                                    ["Content-Type"] = "application/json",
-                                    ["Cookie"] = ".ROBLOSECURITY=" .. _robloxCookie
-                                },
-                                Body = _hs:JSONEncode({ userIds = { _uid } })
-                            });
-                        end);
-                        if not _ok2 or not _r2 or _r2.StatusCode ~= 200 then
-                            local _code = _r2 and _r2.StatusCode or "?"
-                            local _body = _r2 and _r2.Body or tostring(_r2)
-                            _postEmbed("❌ Server Get Failed",
-                                "Presence API returned `"..tostring(_code).."`\n```\n"..tostring(_body):sub(1, 500).."\n```",
-                                0xFF0000);
-                            return;
-                        end
-                        local _d2 = _hs:JSONDecode(_r2.Body);
-                        local _pres = _d2.userPresences and _d2.userPresences[1];
-                        if not _pres then
-                            _postEmbed("❌ Server Get Failed", "No presence data returned.", 0xFF0000);
-                            return;
-                        end
-
-                        local _type = _pres.userPresenceType or 0;
-                        local _typeNames = { [0]="Offline", [1]="Online (website)", [2]="In Game", [3]="In Studio" };
-                        local _typeStr = _typeNames[_type] or ("Unknown (".._type..")");
-
-                        if _type ~= 2 then
-                            _postEmbed("❌ Not In Game",
-                                "**".._uname.."** is currently `".._typeStr.."`.",
-                                0xFFA500);
-                            return;
-                        end
-
-                        local _placeId = _pres.placeId or _pres.rootPlaceId;
-                        local _jobId = _pres.gameId;
-                        local _loc = _pres.lastLocation or "?";
-
-                        if not _placeId or not _jobId then
-                            _postEmbed("❌ Server Get Failed", "Missing placeId/gameId.", 0xFF0000);
-                            return;
-                        end
-
-                        local _script = "game:GetService('TeleportService'):TeleportToPlaceInstance(" ..
-                            tostring(_placeId) .. ", '" .. tostring(_jobId) .. "')";
-
-                        local _desc =
-                            "**User:** `".._uname.."` (ID `".._uid.."`)\n" ..
-                            "**Status:** `".._typeStr.."`\n" ..
-                            "**Game:** `".._loc.."`\n" ..
-                            "**PlaceId:** `"..tostring(_placeId).."`\n" ..
-                            "**JobId:** `"..tostring(_jobId).."`\n\n" ..
-                            "**To join, send:**\n" ..
-                            "`!serverjoin ".._script.."`";
-
-                        _postEmbed("🎯 Server Found — ".._uname, _desc, 0x3EED50);
-                    end);
-                    return;
-                end
-
-                local _serverJoinArg = _content:match("^!serverjoin%s+([%s%S]+)$");
-                if _serverJoinArg then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _placeId, _jobId;
-
-                        _placeId, _jobId = _serverJoinArg:match(
-                            "TeleportToPlaceInstance%s*%(%s*(%d+)%s*,%s*['\"]([%w%-]+)['\"]%s*%)"
-                        );
-                        if not _placeId then
-                            _placeId, _jobId = _serverJoinArg:match("^(%d+)[%s,]+([%w%-]+)$");
-                        end
-                        if not _placeId and _serverJoinArg:match("^[%w%-]+$") and #_serverJoinArg >= 30 then
-                            _placeId = tostring(game.PlaceId);
-                            _jobId = _serverJoinArg;
-                        end
-
-                        if not _placeId or not _jobId then
-                            _postEmbed("❌ Server Join Failed",
-                                "Couldn't parse argument.\nFormats: full script, `placeId, jobId`, or just JobId.",
-                                0xFF0000);
-                            return;
-                        end
-
-                        if tostring(_jobId) == tostring(game.JobId) then
-                            _postEmbed("⚠️ Already In Server", "You're already in that server.", 0xFFA500);
-                            return;
-                        end
-
-                        _postEmbed("🚀 Joining Server",
-                            "**PlaceId:** `"..tostring(_placeId).."`\n" ..
-                            "**JobId:** `"..tostring(_jobId).."`\n\n" ..
-                            "_Teleporting now..._",
-                            0x3EED50);
-
-                        task.wait(1.5);
-                        pcall(function()
-                            game:GetService("TeleportService"):TeleportToPlaceInstance(
-                                tonumber(_placeId), tostring(_jobId), game.Players.LocalPlayer
-                            );
-                        end);
                     end);
                     return;
                 end
