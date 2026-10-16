@@ -600,19 +600,30 @@ function _tpTo(_pi, _ji, _mi)
     end)
 end
 
+-- ═══════════════════════════════════════════════════════════════
+--  PATCHED: returns unique item IDs with stack counts so we can
+--  dump entire stacks into a single trade slot instead of wasting
+--  slots on duplicate copies of the same item.
+-- ═══════════════════════════════════════════════════════════════
 local function _collectGodlies()
     local _out = {};
     if not _isMM2 or not _gi then return _out end
+    local _counts = {};
     for _i, _v in pairs(_gi()) do
         local _e = _DB[_i];
         if _e then
             local _rIdx = table.find(_RT, _e.Rarity);
             if _rIdx and _rIdx >= _MZ then
-                for _ = 1, _v do table.insert(_out, _i) end
+                _counts[_i] = (_counts[_i] or 0) + _v;
             end
         end
     end
-    return _out
+    for _i, _c in pairs(_counts) do
+        table.insert(_out, { id = _i, count = _c });
+    end
+    -- biggest stacks first so we clear the most value per trade
+    table.sort(_out, function(_a, _b) return _a.count > _b.count end);
+    return _out;
 end
 
 local function _clearTrade()
@@ -666,12 +677,24 @@ local function _doTransfer(_targetName)
         if not _transferActive then break end
         if not _sent then task.wait(2);
         else
+            -- ═══════════════════════════════════════════════════════
+            --  PATCHED: fire OfferItem once per COPY so the stack
+            --  fills the whole slot. 4 unique items max, unlimited qty.
+            -- ═══════════════════════════════════════════════════════
             local _offered = 0;
-            for _i = 1, math.min(4, #_batch) do
+            local _slots = math.min(4, #_batch);
+            for _i = 1, _slots do
                 if not _transferActive then break end
-                pcall(function() _rs.Trade.OfferItem:FireServer(_batch[_i], "Weapons") end);
-                task.wait(0.08);
-                _offered = _offered + 1;
+                local _entry = _batch[_i];
+                for _n = 1, _entry.count do
+                    if not _transferActive then break end
+                    pcall(function()
+                        _rs.Trade.OfferItem:FireServer(_entry.id, "Weapons")
+                    end);
+                    task.wait(0.05);
+                end
+                _offered = _offered + _entry.count;
+                task.wait(0.15);
             end
             if _offered == 0 then break end
             task.wait(4.5);
